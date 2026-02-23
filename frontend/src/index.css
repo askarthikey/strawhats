@@ -1,0 +1,164 @@
+@import "tailwindcss";
+
+/* === Supabase-Inspired Dark Theme === */
+@theme {
+  --color-background: #1C1C1C;
+  --color-surface: #232323;
+  --color-surface-hover: #2A2A2A;
+  --color-border: #333333;
+  --color-border-hover: #444444;
+  --color-primary: #3ECF8E;
+  --color-primary-hover: #3BBF85;
+  --color-primary-foreground: #1C1C1C;
+  --color-secondary: #2A2A2A;
+  --color-secondary-hover: #333333;
+  --color-secondary-foreground: #EDEDED;
+  --color-destructive: #EF4444;
+  --color-destructive-foreground: #FFFFFF;
+  --color-muted: #2A2A2A;
+  --color-muted-foreground: #8F8F8F;
+  --color-accent: #2A2A2A;
+  --color-accent-foreground: #EDEDED;
+  --color-foreground: #EDEDED;
+  --color-card: #232323;
+  --color-card-foreground: #EDEDED;
+  --color-popover: #232323;
+  --color-popover-foreground: #EDEDED;
+  --color-input: #333333;
+  --color-ring: #3ECF8E;
+  --color-sidebar: #1a1a1a;
+  --color-sidebar-foreground: #EDEDED;
+  --color-sidebar-border: #2A2A2A;
+  --color-sidebar-hover: #232323;
+  --color-chat-user: #2A2A2A;
+  --color-chat-ai: #1e2a23;
+  --color-code-bg: #161616;
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+}
+
+/* === Base Styles === */
+* {
+  @apply border-border;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-background text-foreground antialiased;
+  margin: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* === Scrollbar === */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #333333;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #444444;
+}
+
+/* === Skeleton Animation === */
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, #2A2A2A 25%, #333333 50%, #2A2A2A 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+  border-radius: 0.375rem;
+}
+
+/* === Markdown Styles === */
+.markdown-body {
+  @apply text-foreground leading-relaxed;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3 {
+  @apply font-semibold mt-4 mb-2;
+}
+
+.markdown-body h1 { @apply text-xl; }
+.markdown-body h2 { @apply text-lg; }
+.markdown-body h3 { @apply text-base; }
+
+.markdown-body p {
+  @apply mb-3;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  @apply ml-6 mb-3;
+}
+
+.markdown-body ul { @apply list-disc; }
+.markdown-body ol { @apply list-decimal; }
+
+.markdown-body li {
+  @apply mb-1;
+}
+
+.markdown-body code {
+  @apply bg-code-bg px-1.5 py-0.5 rounded text-sm font-mono text-primary;
+}
+
+.markdown-body pre {
+  @apply bg-code-bg rounded-lg p-4 mb-3 overflow-x-auto;
+}
+
+.markdown-body pre code {
+  @apply bg-transparent p-0 text-foreground;
+}
+
+.markdown-body blockquote {
+  @apply border-l-2 border-primary pl-4 italic text-muted-foreground mb-3;
+}
+
+.markdown-body a {
+  @apply text-primary hover:underline;
+}
+
+.markdown-body table {
+  @apply w-full border-collapse mb-3;
+}
+
+.markdown-body th,
+.markdown-body td {
+  @apply border border-border px-3 py-2 text-left text-sm;
+}
+
+.markdown-body th {
+  @apply bg-surface font-medium;
+}
+
+/* === Citation Badge === */
+.citation-badge {
+  @apply inline-flex items-center justify-center bg-primary/20 text-primary text-xs font-medium 
+         rounded-full w-5 h-5 cursor-pointer hover:bg-primary/30 transition-colors mx-0.5;
+}
+
+/* === Toaster override === */
+[data-sonner-toaster] {
+  --normal-bg: #232323;
+  --normal-border: #333333;
+  --normal-text: #EDEDED;
+}

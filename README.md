@@ -1,7 +1,7 @@
 # ResearchHub AI — Master Specification (Combined)
 
 **Source materials:**
-- Original project specification (uploaded file). fileciteturn0file0
+- Original project specification (uploaded file).
 - Retrieval-Augmented Generation (RAG) specification (added & expanded).
 
 > This master markdown merges the full ResearchHub AI feature specification with a detailed RAG subsection and implementation guidance. Use this as the single source-of-truth for engineering, demo, and judging.
@@ -283,10 +283,90 @@ User: <question>
 ```
 
 ---
+---
 
+# Getting Started
+
+## Prerequisites
+
+- **Python 3.11+**
+- **Node.js 18+** & npm
+- **Ollama** running locally with `llama3.2` model pulled (`ollama pull llama3.2`)
+- **MongoDB Atlas** M0 cluster (free tier)
+- **Pinecone** free-tier account
+- **Cloudinary** account (free tier)
+- **Google Gemini API key** (fallback LLM)
+
+## Environment Setup
+
+```bash
+# Clone the repo
+git clone <repo-url>
+cd genai_hack
+
+# Copy the example env and fill in your credentials
+cp backend/.env.example backend/.env
+```
+
+Edit `backend/.env` with your actual keys for MongoDB, Pinecone, Cloudinary, Gemini, and JWT secret.
+
+## Backend
+
+```bash
+cd backend
+
+# Create virtual environment & install dependencies
+python -m venv .venv
+
+# Activate (Windows PowerShell)
+.\.venv\Scripts\Activate.ps1
+
+# Activate (macOS / Linux)
+# source .venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Start the backend server
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+The API will be available at **http://localhost:8000**. Docs at **http://localhost:8000/docs**.
+
+## Frontend
+
+```bash
+cd frontend
+
+# Install dependencies
+npm install
+
+# Start the dev server
+npm run dev
+```
+
+The app will be available at **http://localhost:3000**. API calls are proxied to the backend automatically.
+
+## Running Both Together
+
+Open two terminals:
+
+```bash
+# Terminal 1 — Backend
+cd backend
+.\.venv\Scripts\Activate.ps1
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+# Terminal 2 — Frontend
+cd frontend
+npm run dev
+```
+
+Then open **http://localhost:3000** in your browser.
+
+---
 ## Acknowledgements & source
 This master file was created by merging the uploaded ResearchHub AI project document (see original file) and the RAG specification content added during the session. For the uploaded original project document, see here: fileciteturn0file0
 
 ---
 
-_End of master specification._

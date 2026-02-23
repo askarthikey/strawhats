@@ -1,0 +1,47 @@
+# FastAPI & Server
+fastapi
+uvicorn[standard]
+sse-starlette
+python-multipart
+ujson
+
+# Database
+motor
+
+# Validation & Settings
+pydantic[email]
+pydantic-settings
+
+# Auth
+python-jose[cryptography]
+bcrypt
+
+# HTTP Client
+httpx
+
+# PDF Processing
+PyMuPDF
+pdfplumber
+
+#cloudinary
+cloudinary
+
+# Embeddings
+sentence-transformers
+
+# Vector Store
+pinecone
+
+# LLM
+google-generativeai
+
+# Utilities
+python-dotenv
+tiktoken
+scikit-learn
+bibtexparser
+diff-match-patch
+
+# Testing
+pytest
+pytest-asyncio
