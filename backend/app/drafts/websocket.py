@@ -10,6 +10,7 @@ from bson import ObjectId
 
 from app.database import get_db
 from app.utils.helpers import utc_now
+from bson import ObjectId as BsonObjectId
 
 router = APIRouter()
 
@@ -112,15 +113,16 @@ class CollaborationManager:
 manager = CollaborationManager()
 
 
-async def _debounced_save(draft_id: str, content: str, delay: float = 2.0):
+async def _debounced_save(draft_id: str, content: str, content_type: str = "markdown", delay: float = 2.0):
     """Save draft content with debouncing."""
     await asyncio.sleep(delay)
     db = get_db()
     try:
+        field = "content_latex" if content_type == "latex" else "content_markdown"
         await db.drafts.update_one(
-            {"_id": ObjectId(draft_id)},
+            {"_id": BsonObjectId(draft_id)},
             {"$set": {
-                "content_markdown": content,
+                field: content,
                 "updated_at": utc_now(),
             }},
         )
@@ -128,11 +130,12 @@ async def _debounced_save(draft_id: str, content: str, delay: float = 2.0):
         print(f"Auto-save failed for draft {draft_id}: {e}")
 
 
-def schedule_save(draft_id: str, content: str):
+def schedule_save(draft_id: str, content: str, content_type: str = "markdown"):
     """Schedule a debounced save, cancelling any existing timer."""
-    if draft_id in save_timers:
-        save_timers[draft_id].cancel()
-    save_timers[draft_id] = asyncio.create_task(_debounced_save(draft_id, content))
+    timer_key = f"{draft_id}:{content_type}"
+    if timer_key in save_timers:
+        save_timers[timer_key].cancel()
+    save_timers[timer_key] = asyncio.create_task(_debounced_save(draft_id, content, content_type))
 
 
 @router.websocket("/ws/drafts/{draft_id}")
@@ -153,16 +156,33 @@ async def draft_collaboration(websocket: WebSocket, draft_id: str):
         await websocket.close(code=4001, reason="Authentication required")
         return
 
+    # Look up full user info from DB so we get full_name
+    db = get_db()
+    try:
+        user_id = user.get("sub", "")
+        user_doc = await db.users.find_one({"_id": BsonObjectId(user_id)})
+        if user_doc:
+            user = {
+                "id": str(user_doc["_id"]),
+                "full_name": user_doc.get("full_name", ""),
+                "email": user_doc.get("email", ""),
+            }
+        else:
+            user = {"id": user_id, "full_name": user.get("email", "Anonymous"), "email": user.get("email", "")}
+    except Exception:
+        user = {"id": user.get("sub", ""), "full_name": user.get("email", "Anonymous"), "email": user.get("email", "")}
+
     conn_id = await manager.connect(draft_id, websocket, user)
 
     # Send the current document content
     db = get_db()
     try:
-        draft = await db.drafts.find_one({"_id": ObjectId(draft_id)})
+        draft = await db.drafts.find_one({"_id": BsonObjectId(draft_id)})
         if draft:
             await websocket.send_json({
                 "type": "document",
                 "content": draft.get("content_markdown", ""),
+                "content_latex": draft.get("content_latex", ""),
                 "title": draft.get("title", ""),
                 "version": draft.get("version", 1),
             })
@@ -177,12 +197,14 @@ async def draft_collaboration(websocket: WebSocket, draft_id: str):
             if msg_type == "operation":
                 # Client sent a text operation (insert/delete)
                 content = data.get("content", "")
+                content_type = data.get("content_type", "markdown")
                 # Auto-save with debouncing
-                schedule_save(draft_id, content)
+                schedule_save(draft_id, content, content_type)
                 # Broadcast to all other clients
                 await manager.broadcast(draft_id, {
                     "type": "operation",
                     "content": content,
+                    "content_type": content_type,
                     "user_id": user.get("id", ""),
                     "version": data.get("version", 0),
                 }, exclude=websocket)
@@ -208,7 +230,7 @@ async def draft_collaboration(websocket: WebSocket, draft_id: str):
                 title = data.get("title", "")
                 try:
                     await db.drafts.update_one(
-                        {"_id": ObjectId(draft_id)},
+                        {"_id": BsonObjectId(draft_id)},
                         {"$set": {"title": title, "updated_at": utc_now()}},
                     )
                 except Exception:
@@ -222,11 +244,13 @@ async def draft_collaboration(websocket: WebSocket, draft_id: str):
             elif msg_type == "save":
                 # Force save
                 content = data.get("content", "")
+                content_type = data.get("content_type", "markdown")
                 try:
+                    field = "content_latex" if content_type == "latex" else "content_markdown"
                     await db.drafts.update_one(
-                        {"_id": ObjectId(draft_id)},
+                        {"_id": BsonObjectId(draft_id)},
                         {"$set": {
-                            "content_markdown": content,
+                            field: content,
                             "updated_at": utc_now(),
                         }},
                     )

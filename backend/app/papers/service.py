@@ -18,6 +18,8 @@ from app.storage.unified import upload_pdf as storage_upload, get_pdf_url, delet
 from app.papers.status_ws import notify_paper_status
 import httpx
 
+MAX_PDF_SIZE = 50 * 1024 * 1024  # 50 MB
+
 
 SEARCH_FUNCTIONS = {
     "openalex": search_openalex,
@@ -73,6 +75,7 @@ async def import_paper(
         "workspace_id": workspace_id,
         "added_by": user_id,
         "status": PaperStatus.PENDING,
+        "status_reason": None,
         "storage_path": None,
         "chunk_count": 0,
         "dedup_hash": dedup_hash,
@@ -118,14 +121,19 @@ async def upload_paper(
     background_tasks: BackgroundTasks = None,
 ) -> dict:
     """Upload and process a PDF file."""
+    import uuid
     db = get_db()
 
     file_bytes = await file.read()
     filename = file.filename or "upload.pdf"
 
-    # Create paper doc (omit doi when None so sparse unique index allows multiple nulls)
+    # Generate a unique DOI-like identifier for uploaded PDFs
+    # (MongoDB sparse unique index on doi+workspace_id treats null as a value)
+    upload_doi = f"upload:{uuid.uuid4().hex[:16]}"
+
     paper_doc = {
         "title": title or filename.replace(".pdf", ""),
+        "doi": upload_doi,
         "authors": [],
         "year": None,
         "venue": None,
@@ -135,6 +143,7 @@ async def upload_paper(
         "workspace_id": workspace_id,
         "added_by": user_id,
         "status": PaperStatus.PROCESSING,
+        "status_reason": None,
         "storage_path": None,
         "chunk_count": 0,
         "dedup_hash": None,
@@ -273,10 +282,19 @@ async def _download_pdf(pdf_url: str) -> bytes:
     }
     async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
         resp = await client.get(pdf_url, headers=headers)
+        if resp.status_code == 403:
+            raise ValueError("PDF not downloadable — access forbidden (HTTP 403)")
+        if resp.status_code == 404:
+            raise ValueError("PDF not found — the URL may have changed (HTTP 404)")
         resp.raise_for_status()
         content_type = resp.headers.get("content-type", "")
         if "html" in content_type and "pdf" not in content_type:
-            raise ValueError(f"Expected PDF but got {content_type} — likely a paywall or invalid URL")
+            raise ValueError("PDF behind publisher paywall — received HTML instead of PDF")
+        if len(resp.content) > MAX_PDF_SIZE:
+            size_mb = len(resp.content) / (1024 * 1024)
+            raise ValueError(f"PDF too large ({size_mb:.1f} MB) — maximum is 50 MB")
+        if len(resp.content) < 100:
+            raise ValueError("Invalid PDF — file is too small to be a valid document")
         return resp.content
 
 
@@ -295,9 +313,11 @@ async def _process_paper_pdf(paper_id: str, pdf_url: str, workspace_id: str):
 
         # Try direct download first, then Unpaywall fallback
         pdf_bytes = None
+        download_reason = None
         try:
             pdf_bytes = await _download_pdf(pdf_url)
         except (httpx.HTTPStatusError, ValueError) as dl_err:
+            download_reason = str(dl_err)
             print(f"Direct PDF download failed for {paper_id}: {dl_err}")
             # Fallback: try Unpaywall for an open-access PDF
             if paper_doi:
@@ -306,20 +326,30 @@ async def _process_paper_pdf(paper_id: str, pdf_url: str, workspace_id: str):
                 if alt_url and alt_url != pdf_url:
                     try:
                         pdf_bytes = await _download_pdf(alt_url)
+                        download_reason = None  # fallback succeeded
                         print(f"Unpaywall fallback succeeded for {paper_id}")
                     except Exception as alt_err:
+                        download_reason = str(alt_err)
                         print(f"Unpaywall fallback also failed: {alt_err}")
+        except httpx.TimeoutException:
+            download_reason = "PDF download timed out — server did not respond in 60 seconds"
 
         if pdf_bytes is None:
-            # Could not obtain PDF — keep as metadata-only instead of hard-failing
-            print(f"PDF unavailable for paper {paper_id}, keeping as metadata-only")
+            # Could not obtain PDF — keep as metadata-only with a specific reason
+            if not download_reason:
+                download_reason = "PDF not accessible — no open-access version found"
+            print(f"PDF unavailable for paper {paper_id}: {download_reason}")
             await db.papers.update_one(
                 {"_id": ObjectId(paper_id)},
-                {"$set": {"status": PaperStatus.PENDING, "updated_at": utc_now()}},
+                {"$set": {
+                    "status": PaperStatus.PENDING,
+                    "status_reason": download_reason,
+                    "updated_at": utc_now(),
+                }},
             )
             await notify_paper_status(
                 workspace_id, paper_id, "pending",
-                "PDF not accessible (publisher paywall). Paper saved as metadata-only.",
+                download_reason,
                 title=paper_title,
             )
             return
@@ -342,12 +372,17 @@ async def _process_paper_pdf(paper_id: str, pdf_url: str, workspace_id: str):
         await _process_pdf_bytes(paper_id, pdf_bytes, workspace_id)
 
     except Exception as e:
-        print(f"Failed to process paper {paper_id}: {e}")
+        reason = str(e)
+        print(f"Failed to process paper {paper_id}: {reason}")
         await db.papers.update_one(
             {"_id": ObjectId(paper_id)},
-            {"$set": {"status": PaperStatus.FAILED, "updated_at": utc_now()}},
+            {"$set": {
+                "status": PaperStatus.FAILED,
+                "status_reason": reason,
+                "updated_at": utc_now(),
+            }},
         )
-        await notify_paper_status(workspace_id, paper_id, "failed", str(e))
+        await notify_paper_status(workspace_id, paper_id, "failed", reason)
 
 
 async def _try_fetch_and_process(paper_id: str, doi: str, workspace_id: str):
@@ -355,6 +390,21 @@ async def _try_fetch_and_process(paper_id: str, doi: str, workspace_id: str):
     pdf_url = await fetch_unpaywall_pdf(doi)
     if pdf_url:
         await _process_paper_pdf(paper_id, pdf_url, workspace_id)
+    else:
+        # No open-access PDF found — update status with reason
+        db = get_db()
+        reason = "No open-access PDF available for this DOI"
+        await db.papers.update_one(
+            {"_id": ObjectId(paper_id)},
+            {"$set": {
+                "status": PaperStatus.PENDING,
+                "status_reason": reason,
+                "updated_at": utc_now(),
+            }},
+        )
+        paper = await db.papers.find_one({"_id": ObjectId(paper_id)})
+        paper_title = paper.get("title", "") if paper else ""
+        await notify_paper_status(workspace_id, paper_id, "pending", reason, title=paper_title)
 
 
 async def _process_pdf_bytes(paper_id: str, pdf_bytes: bytes, workspace_id: str):

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import api from "@/lib/api";
 import type { ChatMessage, Citation, Paper } from "@/types";
 import { Button } from "@/components/ui/button";
@@ -19,12 +19,313 @@ import {
   Filter,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import rehypeHighlight from "rehype-highlight";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import mermaid from "mermaid";
+import {
+  BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
+  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+} from "recharts";
+
+// Initialize mermaid
+mermaid.initialize({
+  startOnLoad: false,
+  theme: "dark",
+  securityLevel: "loose",
+  fontFamily: "inherit",
+});
+
+// Sanitize Mermaid code to fix common LLM issues
+// Parentheses inside node labels like A[Text (info)] confuse the parser —
+// they must be quoted: A["Text (info)"]
+function sanitizeMermaidCode(code: string): string {
+  return code.split("\n").map(line => {
+    // Quote contents of [...] node labels that contain ( or ) or &
+    line = line.replace(
+      /(\w+)\[([^\]"]+)\]/g,
+      (_m, id, content) => {
+        if (/[()&]/.test(content)) {
+          return `${id}["${content}"]`;
+        }
+        return _m;
+      }
+    );
+    // Quote contents of {...} decision labels that contain ( or ) or &
+    line = line.replace(
+      /(\w+)\{([^}"]+)\}/g,
+      (_m, id, content) => {
+        if (/[()&]/.test(content)) {
+          return `${id}{"${content}"}`;
+        }
+        return _m;
+      }
+    );
+    return line;
+  }).join("\n");
+}
+
+// Mermaid diagram renderer
+function MermaidDiagram({ code }: { code: string }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [svg, setSvg] = useState<string>("");
+  const [error, setError] = useState<string>("");
+  const id = useMemo(() => `mermaid-${Math.random().toString(36).slice(2, 9)}`, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const sanitized = sanitizeMermaidCode(code.trim());
+        const { svg: renderedSvg } = await mermaid.render(id, sanitized);
+        if (!cancelled) setSvg(renderedSvg);
+      } catch (err: any) {
+        // Mermaid injects error elements into the DOM on failure — clean them up
+        const errorEl = document.getElementById(`d${id}`);
+        if (errorEl) errorEl.remove();
+        // Also remove any stray mermaid error containers
+        document.querySelectorAll(`[id="${id}"]`).forEach((el) => el.remove());
+        document.querySelectorAll('.mermaid-error').forEach((el) => el.remove());
+        // Remove any element that Mermaid may have appended at the end of body
+        const bodyChildren = document.body.children;
+        for (let i = bodyChildren.length - 1; i >= 0; i--) {
+          const child = bodyChildren[i] as HTMLElement;
+          if (child.id?.startsWith('d') && child.querySelector?.('svg')) {
+            // Mermaid error SVGs
+            if (child.textContent?.includes('Syntax error')) {
+              child.remove();
+            }
+          }
+        }
+        if (!cancelled) setError(err?.message || "Failed to render diagram");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [code, id]);
+
+  if (error) {
+    return (
+      <div className="bg-destructive/10 border border-destructive/30 rounded p-2 text-xs text-destructive">
+        Diagram error: {error}
+        <pre className="mt-1 text-[10px] opacity-70 overflow-x-auto">{code}</pre>
+      </div>
+    );
+  }
+
+  const exportSvg = () => {
+    if (!svg) return;
+    const blob = new Blob([svg], { type: "image/svg+xml" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "diagram.svg";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportPng = () => {
+    if (!svg || !containerRef.current) return;
+    const svgEl = containerRef.current.querySelector("svg");
+    if (!svgEl) return;
+    const canvas = document.createElement("canvas");
+    const bbox = svgEl.getBoundingClientRect();
+    canvas.width = bbox.width * 2;
+    canvas.height = bbox.height * 2;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.scale(2, 2);
+    const img = new Image();
+    const svgData = new XMLSerializer().serializeToString(svgEl);
+    img.onload = () => {
+      ctx.drawImage(img, 0, 0);
+      const a = document.createElement("a");
+      a.href = canvas.toDataURL("image/png");
+      a.download = "diagram.png";
+      a.click();
+    };
+    img.src = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svgData)));
+  };
+
+  return (
+    <div className="my-2 rounded-lg border border-border overflow-hidden group/diagram">
+      <div className="flex items-center justify-end gap-1 px-2 py-1 bg-surface/50 border-b border-border opacity-0 group-hover/diagram:opacity-100 transition-opacity">
+        <button onClick={() => navigator.clipboard.writeText(code)} className="px-2 py-0.5 text-[10px] bg-primary/10 hover:bg-primary/20 text-primary rounded" title="Copy Mermaid code">
+          Copy Code
+        </button>
+        <button onClick={exportSvg} className="px-2 py-0.5 text-[10px] bg-primary/10 hover:bg-primary/20 text-primary rounded" title="Export as SVG">
+          SVG
+        </button>
+        <button onClick={exportPng} className="px-2 py-0.5 text-[10px] bg-primary/10 hover:bg-primary/20 text-primary rounded" title="Export as PNG">
+          PNG
+        </button>
+      </div>
+      <div
+        ref={containerRef}
+        className="p-2 bg-background/50 overflow-x-auto flex justify-center"
+        dangerouslySetInnerHTML={{ __html: svg }}
+      />
+    </div>
+  );
+}
+
+// Recharts chart renderer
+const COLORS = ["#8884d8", "#82ca9d", "#ffc658", "#ff7c7c", "#8dd1e1", "#d084d0", "#ffb347", "#87ceeb"];
+
+function RechartsRenderer({ code }: { code: string }) {
+  const [error, setError] = useState<string>("");
+  const chartRef = useRef<HTMLDivElement>(null);
+  const config = useMemo(() => {
+    try {
+      return JSON.parse(code.trim());
+    } catch (err: any) {
+      setError("Invalid chart JSON");
+      return null;
+    }
+  }, [code]);
+
+  if (error || !config) {
+    return (
+      <div className="bg-destructive/10 border border-destructive/30 rounded p-2 text-xs text-destructive">
+        Chart error: {error}
+      </div>
+    );
+  }
+
+  const { type, title, data, xKey = "name", series = [] } = config;
+
+  const exportPng = () => {
+    if (!chartRef.current) return;
+    const svgEl = chartRef.current.querySelector("svg");
+    if (!svgEl) return;
+    const canvas = document.createElement("canvas");
+    const bbox = svgEl.getBoundingClientRect();
+    canvas.width = bbox.width * 2;
+    canvas.height = bbox.height * 2;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.fillStyle = "#1a1a2e";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.scale(2, 2);
+    const img = new Image();
+    const svgData = new XMLSerializer().serializeToString(svgEl);
+    img.onload = () => {
+      ctx.drawImage(img, 0, 0);
+      const a = document.createElement("a");
+      a.href = canvas.toDataURL("image/png");
+      a.download = `${title || "chart"}.png`;
+      a.click();
+    };
+    img.src = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svgData)));
+  };
+
+  const exportJson = () => {
+    navigator.clipboard.writeText(JSON.stringify(config, null, 2));
+  };
+
+  return (
+    <div className="my-2 rounded-lg border border-border overflow-hidden group/chart">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-surface/50 border-b border-border">
+        {title && <p className="text-xs font-medium text-foreground">{title}</p>}
+        <div className="flex items-center gap-1 ml-auto opacity-0 group-hover/chart:opacity-100 transition-opacity">
+          <button onClick={exportJson} className="px-2 py-0.5 text-[10px] bg-primary/10 hover:bg-primary/20 text-primary rounded" title="Copy chart data">
+            Copy Data
+          </button>
+          <button onClick={exportPng} className="px-2 py-0.5 text-[10px] bg-primary/10 hover:bg-primary/20 text-primary rounded" title="Export as PNG">
+            PNG
+          </button>
+        </div>
+      </div>
+      <div ref={chartRef} className="p-3 bg-background/50">
+        <ResponsiveContainer width="100%" height={250}>
+          {type === "pie" ? (
+            <PieChart>
+              <Pie
+                data={data}
+                dataKey={series[0]?.key || "value"}
+                nameKey={xKey}
+                cx="50%"
+                cy="50%"
+                outerRadius={80}
+                label={({ name, value }: any) => `${name}: ${value}`}
+              >
+                {data.map((_: any, i: number) => (
+                  <Cell key={i} fill={series[0]?.color || COLORS[i % COLORS.length]} />
+                ))}
+              </Pie>
+              <Tooltip />
+              <Legend />
+            </PieChart>
+          ) : type === "line" ? (
+            <LineChart data={data}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+              <XAxis dataKey={xKey} tick={{ fontSize: 10 }} />
+              <YAxis tick={{ fontSize: 10 }} />
+              <Tooltip />
+              <Legend />
+              {series.map((s: any, i: number) => (
+                <Line key={i} type="monotone" dataKey={s.key} stroke={s.color || COLORS[i]} name={s.name || s.key} strokeWidth={2} />
+              ))}
+            </LineChart>
+          ) : (
+            <BarChart data={data}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+              <XAxis dataKey={xKey} tick={{ fontSize: 10 }} />
+              <YAxis tick={{ fontSize: 10 }} />
+              <Tooltip />
+              <Legend />
+              {series.map((s: any, i: number) => (
+                <Bar key={i} dataKey={s.key} fill={s.color || COLORS[i]} name={s.name || s.key} />
+              ))}
+            </BarChart>
+          )}
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+// Custom code component for ReactMarkdown that renders mermaid and recharts
+const markdownCodeComponent: Components["code"] = ({ className, children, ...props }) => {
+  const match = /language-(\w+)/.exec(className || "");
+  const lang = match?.[1];
+  const codeString = String(children).replace(/\n$/, "");
+
+  if (lang === "mermaid") {
+    return <MermaidDiagram code={codeString} />;
+  }
+  if (lang === "recharts") {
+    return <RechartsRenderer code={codeString} />;
+  }
+  if (lang === "latex") {
+    return (
+      <div className="relative my-2 group">
+        <button
+          onClick={() => {
+            navigator.clipboard.writeText(codeString);
+          }}
+          className="absolute top-2 right-2 px-2 py-1 text-[10px] bg-primary/20 hover:bg-primary/30 text-primary rounded opacity-0 group-hover:opacity-100 transition-opacity"
+          title="Copy LaTeX"
+        >
+          Copy LaTeX
+        </button>
+        <code className={className} {...props}>
+          {children}
+        </code>
+      </div>
+    );
+  }
+
+  // Default: render as code block
+  return (
+    <code className={className} {...props}>
+      {children}
+    </code>
+  );
+};
 
 interface ChatPanelProps {
   workspaceId: string;
@@ -405,6 +706,7 @@ function ChatBubble({ message }: { message: ChatMessage }) {
               <ReactMarkdown
                 remarkPlugins={[remarkGfm, remarkMath]}
                 rehypePlugins={[rehypeKatex, rehypeHighlight]}
+                components={{ code: markdownCodeComponent }}
               >
                 {message.content}
               </ReactMarkdown>

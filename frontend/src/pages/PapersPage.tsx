@@ -136,7 +136,12 @@ export function PapersPage() {
           setPapers((prev) =>
             prev.map((p) =>
               p.id === data.paper_id
-                ? { ...p, status: data.status, chunk_count: data.chunk_count || p.chunk_count }
+                ? {
+                  ...p,
+                  status: data.status,
+                  status_reason: data.message || p.status_reason,
+                  chunk_count: data.chunk_count || p.chunk_count,
+                }
                 : p
             )
           );
@@ -508,6 +513,15 @@ export function PapersPage() {
                                 </Badge>
                                 {statusMessages[paper.id] && (
                                   <span className="text-xs text-blue-500 animate-pulse">{statusMessages[paper.id]}</span>
+                                )}
+                                {/* Show specific status_reason for pending/failed papers */}
+                                {(paper.status === "pending" || paper.status === "failed") && paper.status_reason && !statusMessages[paper.id] && (
+                                  <span className={cn(
+                                    "text-xs",
+                                    paper.status === "pending" ? "text-yellow-500" : "text-destructive"
+                                  )}>
+                                    {paper.status_reason}
+                                  </span>
                                 )}
                                 {paper.year && <Badge variant="secondary" className="text-xs">{paper.year}</Badge>}
                                 {paper.venue && <Badge variant="secondary" className="text-xs hidden sm:inline-flex">{paper.venue.slice(0, 30)}</Badge>}
