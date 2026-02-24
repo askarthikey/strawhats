@@ -4,11 +4,10 @@ import { AppLayout } from "@/components/layout/AppLayout";
 import { LoginPage } from "@/pages/LoginPage";
 import { RegisterPage } from "@/pages/RegisterPage";
 import { DashboardPage } from "@/pages/DashboardPage";
-import { ChatPage } from "@/pages/ChatPage";
 import { PapersPage } from "@/pages/PapersPage";
-import { SearchPage } from "@/pages/SearchPage";
 import { DraftsPage } from "@/pages/DraftsPage";
-import { ReferencesPage } from "@/pages/ReferencesPage";
+import { DraftEditor } from "@/pages/DraftEditor";
+import { WorkspaceMembersPage } from "@/pages/WorkspaceMembersPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { AdminPage } from "@/pages/AdminPage";
 import { Toaster } from "sonner";
@@ -25,11 +24,10 @@ function App() {
           {/* Protected routes */}
           <Route element={<AppLayout />}>
             <Route path="/dashboard" element={<DashboardPage />} />
-            <Route path="/workspace/:workspaceId/chat" element={<ChatPage />} />
-            <Route path="/workspace/:workspaceId/search" element={<SearchPage />} />
             <Route path="/workspace/:workspaceId/papers" element={<PapersPage />} />
             <Route path="/workspace/:workspaceId/drafts" element={<DraftsPage />} />
-            <Route path="/workspace/:workspaceId/references" element={<ReferencesPage />} />
+            <Route path="/workspace/:workspaceId/drafts/:draftId" element={<DraftEditor />} />
+            <Route path="/workspace/:workspaceId/members" element={<WorkspaceMembersPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/admin" element={<AdminPage />} />
           </Route>

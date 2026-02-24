@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
 
 /* === Supabase-Inspired Dark Theme === */
 @theme {

@@ -12,9 +12,10 @@ from app.papers.ingestion import (
 )
 from app.papers.processing import extract_text_from_pdf, chunk_text
 from app.embeddings.service import embed_batch
-from app.utils.pinecone_client import upsert_chunks, delete_by_paper
+from app.utils.vector_store import upsert_chunks, delete_by_paper
 from app.utils.helpers import utc_now, generate_dedup_hash, serialize_doc
-from app.storage.cloudinary_client import upload_pdf as cloud_upload, get_pdf_url, delete_pdf
+from app.storage.unified import upload_pdf as storage_upload, get_pdf_url, delete_pdf as storage_delete
+from app.papers.status_ws import notify_paper_status
 import httpx
 
 
@@ -59,11 +60,10 @@ async def import_paper(
     if existing:
         return serialize_doc(existing)
 
-    # Create paper document
+    # Create paper document (omit doi when None so sparse unique index allows multiple nulls)
     paper_doc = {
         "title": metadata.title,
         "authors": metadata.authors,
-        "doi": metadata.doi,
         "year": metadata.year,
         "venue": metadata.venue,
         "abstract": metadata.abstract,
@@ -79,7 +79,20 @@ async def import_paper(
         "created_at": utc_now(),
         "updated_at": utc_now(),
     }
-    result = await db.papers.insert_one(paper_doc)
+    if metadata.doi:
+        paper_doc["doi"] = metadata.doi
+    try:
+        result = await db.papers.insert_one(paper_doc)
+    except Exception as e:
+        # Handle DuplicateKeyError (e.g. same DOI in same workspace race condition)
+        if "DuplicateKeyError" in str(type(e).__name__) or "E11000" in str(e):
+            existing = await db.papers.find_one({
+                "doi": metadata.doi,
+                "workspace_id": workspace_id,
+            })
+            if existing:
+                return serialize_doc(existing)
+        raise
     paper_id = str(result.inserted_id)
     paper_doc["_id"] = result.inserted_id
 
@@ -110,11 +123,10 @@ async def upload_paper(
     file_bytes = await file.read()
     filename = file.filename or "upload.pdf"
 
-    # Create paper doc
+    # Create paper doc (omit doi when None so sparse unique index allows multiple nulls)
     paper_doc = {
         "title": title or filename.replace(".pdf", ""),
         "authors": [],
-        "doi": None,
         "year": None,
         "venue": None,
         "abstract": None,
@@ -132,16 +144,20 @@ async def upload_paper(
     result = await db.papers.insert_one(paper_doc)
     paper_id = str(result.inserted_id)
 
-    # Upload to Cloudinary
+    # Upload to storage
     try:
-        storage_path = cloud_upload(file_bytes, paper_id, filename)
+        storage_result = await storage_upload(file_bytes, paper_id, filename)
         await db.papers.update_one(
             {"_id": result.inserted_id},
-            {"$set": {"storage_path": storage_path}},
+            {"$set": {
+                "storage_path": storage_result["path"],
+                "storage_url": storage_result["url"],
+                "storage_provider": storage_result["provider"],
+            }},
         )
     except Exception as e:
-        print(f"Cloudinary upload failed: {e}")
-        storage_path = None
+        print(f"Storage upload failed: {e}")
+        storage_result = None
 
     # Process PDF in background
     if background_tasks:
@@ -247,6 +263,23 @@ async def get_paper_pdf_url(paper_id: str) -> Optional[str]:
 
 # --- Background processing tasks ---
 
+async def _download_pdf(pdf_url: str) -> bytes:
+    """Download PDF with browser-like headers. Raises on failure."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/pdf,*/*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": pdf_url,
+    }
+    async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+        resp = await client.get(pdf_url, headers=headers)
+        resp.raise_for_status()
+        content_type = resp.headers.get("content-type", "")
+        if "html" in content_type and "pdf" not in content_type:
+            raise ValueError(f"Expected PDF but got {content_type} — likely a paywall or invalid URL")
+        return resp.content
+
+
 async def _process_paper_pdf(paper_id: str, pdf_url: str, workspace_id: str):
     """Download and process a paper's PDF."""
     db = get_db()
@@ -255,19 +288,52 @@ async def _process_paper_pdf(paper_id: str, pdf_url: str, workspace_id: str):
             {"_id": ObjectId(paper_id)},
             {"$set": {"status": PaperStatus.PROCESSING}},
         )
+        paper = await db.papers.find_one({"_id": ObjectId(paper_id)})
+        paper_title = paper.get("title", "") if paper else ""
+        paper_doi = paper.get("doi") if paper else None
+        await notify_paper_status(workspace_id, paper_id, "processing", "Downloading PDF...", title=paper_title)
 
-        # Download PDF
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.get(pdf_url)
-            resp.raise_for_status()
-            pdf_bytes = resp.content
-
-        # Upload to Cloudinary
+        # Try direct download first, then Unpaywall fallback
+        pdf_bytes = None
         try:
-            storage_path = cloud_upload(pdf_bytes, paper_id)
+            pdf_bytes = await _download_pdf(pdf_url)
+        except (httpx.HTTPStatusError, ValueError) as dl_err:
+            print(f"Direct PDF download failed for {paper_id}: {dl_err}")
+            # Fallback: try Unpaywall for an open-access PDF
+            if paper_doi:
+                print(f"Trying Unpaywall fallback for DOI {paper_doi}...")
+                alt_url = await fetch_unpaywall_pdf(paper_doi)
+                if alt_url and alt_url != pdf_url:
+                    try:
+                        pdf_bytes = await _download_pdf(alt_url)
+                        print(f"Unpaywall fallback succeeded for {paper_id}")
+                    except Exception as alt_err:
+                        print(f"Unpaywall fallback also failed: {alt_err}")
+
+        if pdf_bytes is None:
+            # Could not obtain PDF — keep as metadata-only instead of hard-failing
+            print(f"PDF unavailable for paper {paper_id}, keeping as metadata-only")
             await db.papers.update_one(
                 {"_id": ObjectId(paper_id)},
-                {"$set": {"storage_path": storage_path}},
+                {"$set": {"status": PaperStatus.PENDING, "updated_at": utc_now()}},
+            )
+            await notify_paper_status(
+                workspace_id, paper_id, "pending",
+                "PDF not accessible (publisher paywall). Paper saved as metadata-only.",
+                title=paper_title,
+            )
+            return
+
+        # Upload to storage
+        try:
+            storage_result = await storage_upload(pdf_bytes, paper_id)
+            await db.papers.update_one(
+                {"_id": ObjectId(paper_id)},
+                {"$set": {
+                    "storage_path": storage_result["path"],
+                    "storage_url": storage_result["url"],
+                    "storage_provider": storage_result["provider"],
+                }},
             )
         except Exception:
             pass
@@ -281,6 +347,7 @@ async def _process_paper_pdf(paper_id: str, pdf_url: str, workspace_id: str):
             {"_id": ObjectId(paper_id)},
             {"$set": {"status": PaperStatus.FAILED, "updated_at": utc_now()}},
         )
+        await notify_paper_status(workspace_id, paper_id, "failed", str(e))
 
 
 async def _try_fetch_and_process(paper_id: str, doi: str, workspace_id: str):
@@ -294,6 +361,12 @@ async def _process_pdf_bytes(paper_id: str, pdf_bytes: bytes, workspace_id: str)
     """Extract text, chunk, embed, and index a PDF."""
     db = get_db()
     try:
+        # Get paper title for status messages
+        paper = await db.papers.find_one({"_id": ObjectId(paper_id)})
+        paper_title = paper.get("title", "") if paper else ""
+
+        await notify_paper_status(workspace_id, paper_id, "processing", "Extracting text from PDF...", title=paper_title)
+
         # Extract text
         pages = extract_text_from_pdf(pdf_bytes)
         if not pages:
@@ -301,7 +374,10 @@ async def _process_pdf_bytes(paper_id: str, pdf_bytes: bytes, workspace_id: str)
                 {"_id": ObjectId(paper_id)},
                 {"$set": {"status": PaperStatus.FAILED, "updated_at": utc_now()}},
             )
+            await notify_paper_status(workspace_id, paper_id, "failed", "Could not extract text from PDF", title=paper_title)
             return
+
+        await notify_paper_status(workspace_id, paper_id, "processing", f"Chunking {len(pages)} pages...", title=paper_title)
 
         # Chunk text
         chunks = chunk_text(pages)
@@ -310,11 +386,8 @@ async def _process_pdf_bytes(paper_id: str, pdf_bytes: bytes, workspace_id: str)
                 {"_id": ObjectId(paper_id)},
                 {"$set": {"status": PaperStatus.FAILED, "updated_at": utc_now()}},
             )
+            await notify_paper_status(workspace_id, paper_id, "failed", "No chunks produced", title=paper_title)
             return
-
-        # Get paper title for metadata
-        paper = await db.papers.find_one({"_id": ObjectId(paper_id)})
-        paper_title = paper.get("title", "") if paper else ""
 
         # Store chunks in MongoDB
         chunk_docs = []
@@ -337,6 +410,8 @@ async def _process_pdf_bytes(paper_id: str, pdf_bytes: bytes, workspace_id: str)
         result = await db.chunks.insert_many(chunk_docs)
         chunk_ids = [str(id) for id in result.inserted_ids]
 
+        await notify_paper_status(workspace_id, paper_id, "processing", f"Embedding {len(chunks)} chunks...", title=paper_title)
+
         # Embed chunks
         embeddings = embed_batch(chunk_texts)
 
@@ -356,6 +431,7 @@ async def _process_pdf_bytes(paper_id: str, pdf_bytes: bytes, workspace_id: str)
             })
 
         # Upsert to Pinecone
+        await notify_paper_status(workspace_id, paper_id, "processing", "Indexing in vector store...", title=paper_title)
         upsert_chunks(vectors, namespace=workspace_id)
 
         # Update paper status
@@ -369,6 +445,7 @@ async def _process_pdf_bytes(paper_id: str, pdf_bytes: bytes, workspace_id: str)
                 }
             },
         )
+        await notify_paper_status(workspace_id, paper_id, "indexed", "Processing complete", chunk_count=len(chunks), title=paper_title)
 
     except Exception as e:
         print(f"Failed to process PDF for paper {paper_id}: {e}")
@@ -376,3 +453,4 @@ async def _process_pdf_bytes(paper_id: str, pdf_bytes: bytes, workspace_id: str)
             {"_id": ObjectId(paper_id)},
             {"$set": {"status": PaperStatus.FAILED, "updated_at": utc_now()}},
         )
+        await notify_paper_status(workspace_id, paper_id, "failed", str(e))

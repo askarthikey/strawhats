@@ -8,6 +8,7 @@ import secrets
 from app.database import get_db
 from app.utils.helpers import utc_now, serialize_doc
 from app.workspaces.schemas import MemberRole
+from app.utils.vector_store import delete_namespace
 
 
 async def create_workspace(name: str, description: str, owner_id: str, owner_email: str, owner_name: str) -> dict:
@@ -76,12 +77,26 @@ async def update_workspace(workspace_id: str, name: str = None, description: str
 
 async def delete_workspace(workspace_id: str) -> bool:
     db = get_db()
-    # Delete all papers, chunks, chat logs, drafts in workspace
+    # Gather paper_ids first so we can delete chunks by paper_id (not workspace_id)
+    paper_ids = []
+    async for paper in db.papers.find({"workspace_id": workspace_id}, {"_id": 1}):
+        paper_ids.append(str(paper["_id"]))
+
+    # Delete chunks by paper_id (chunks don't have workspace_id field)
+    if paper_ids:
+        await db.chunks.delete_many({"paper_id": {"$in": paper_ids}})
+
+    # Delete papers, chat logs, drafts
     await db.papers.delete_many({"workspace_id": workspace_id})
-    await db.chunks.delete_many({"workspace_id": workspace_id})
     await db.chat_logs.delete_many({"workspace_id": workspace_id})
     await db.drafts.delete_many({"workspace_id": workspace_id})
     await db.draft_versions.delete_many({"workspace_id": workspace_id})
+
+    # Clean up Pinecone namespace
+    try:
+        delete_namespace(workspace_id)
+    except Exception as e:
+        print(f"Failed to delete Pinecone namespace {workspace_id}: {e}")
 
     result = await db.workspaces.delete_one({"_id": ObjectId(workspace_id)})
     return result.deleted_count > 0

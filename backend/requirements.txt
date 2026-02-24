@@ -31,6 +31,7 @@ sentence-transformers
 
 # Vector Store
 pinecone
+faiss-cpu
 
 # LLM
 google-generativeai

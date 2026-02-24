@@ -1,6 +1,7 @@
 """Cloudinary storage client for PDF file management."""
 
 import io
+import asyncio
 import cloudinary
 import cloudinary.uploader
 import cloudinary.api
@@ -23,21 +24,25 @@ def _ensure_configured():
         _configured = True
 
 
-def upload_pdf(file_bytes: bytes, paper_id: str, filename: str = None) -> str:
-    """Upload a PDF to Cloudinary. Returns the public_id (storage path)."""
+def _sync_upload_pdf(file_bytes: bytes, paper_id: str, filename: str = None) -> str:
+    """Synchronous upload — runs in executor."""
     _ensure_configured()
     public_id = f"{FOLDER_PREFIX}/{paper_id}/{filename or paper_id}"
-
-    # Wrap bytes in BytesIO so Cloudinary SDK can read it as a file
     file_stream = io.BytesIO(file_bytes)
-
     result = cloudinary.uploader.upload(
         file_stream,
         public_id=public_id,
         resource_type="raw",
+        folder=f"{FOLDER_PREFIX}/{paper_id}",
         overwrite=True,
     )
     return result.get("public_id", public_id)
+
+
+async def upload_pdf(file_bytes: bytes, paper_id: str, filename: str = None) -> str:
+    """Upload a PDF to Cloudinary. Returns the public_id (storage path)."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _sync_upload_pdf, file_bytes, paper_id, filename)
 
 
 def get_pdf_url(storage_path: str, expires_in: int = 3600) -> str:
@@ -47,14 +52,13 @@ def get_pdf_url(storage_path: str, expires_in: int = 3600) -> str:
         result = cloudinary.api.resource(storage_path, resource_type="raw")
         return result.get("secure_url", "")
     except Exception:
-        # Build URL directly
         return cloudinary.utils.cloudinary_url(
             storage_path, resource_type="raw", secure=True
         )[0]
 
 
-def download_pdf(storage_path: str) -> bytes:
-    """Download PDF bytes from Cloudinary."""
+def _sync_download_pdf(storage_path: str) -> bytes:
+    """Synchronous download — runs in executor."""
     _ensure_configured()
     import httpx
     url = get_pdf_url(storage_path)
@@ -63,10 +67,22 @@ def download_pdf(storage_path: str) -> bytes:
     return resp.content
 
 
-def delete_pdf(storage_path: str):
-    """Delete a PDF from Cloudinary."""
+async def download_pdf(storage_path: str) -> bytes:
+    """Download PDF bytes from Cloudinary."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _sync_download_pdf, storage_path)
+
+
+def _sync_delete_pdf(storage_path: str):
+    """Synchronous delete — runs in executor."""
     _ensure_configured()
     cloudinary.uploader.destroy(storage_path, resource_type="raw")
+
+
+async def delete_pdf(storage_path: str):
+    """Delete a PDF from Cloudinary."""
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _sync_delete_pdf, storage_path)
 
 
 def list_pdfs(paper_id: str) -> list:
@@ -89,7 +105,8 @@ async def ensure_storage():
     """Verify Cloudinary connectivity. No bucket creation needed."""
     _ensure_configured()
     try:
-        cloudinary.api.ping()
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, cloudinary.api.ping)
         return True
     except Exception as e:
         print(f"Cloudinary connectivity check failed: {e}")

@@ -24,8 +24,20 @@ async def create_indexes():
     # Users: unique email
     await db.users.create_index("email", unique=True)
 
-    # Papers: unique DOI (sparse for papers without DOI)
-    await db.papers.create_index("doi", unique=True, sparse=True)
+    # Papers: drop old global DOI index if it exists, replace with per-workspace compound
+    try:
+        index_info = await db.papers.index_information()
+        if "doi_1" in index_info:
+            await db.papers.drop_index("doi_1")
+    except Exception:
+        pass
+    # Compound unique DOI per workspace (sparse so papers without DOI are allowed)
+    await db.papers.create_index(
+        [("doi", 1), ("workspace_id", 1)],
+        unique=True,
+        sparse=True,
+        name="doi_workspace_unique",
+    )
     # Text index for hybrid search
     await db.papers.create_index([("title", "text"), ("abstract", "text")])
     # Workspace filter

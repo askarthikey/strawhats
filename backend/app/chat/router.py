@@ -32,6 +32,7 @@ async def chat_stream(
             top_k=req.top_k,
             temperature=req.temperature,
             use_mmr=req.use_mmr,
+            paper_ids=req.paper_ids,
         ):
             yield {
                 "event": event.get("type", "token"),

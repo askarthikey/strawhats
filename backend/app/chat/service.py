@@ -1,5 +1,6 @@
 """RAG pipeline: retrieve → rerank → generate with citations."""
 
+import logging
 from typing import AsyncGenerator, List, Dict, Optional
 from datetime import datetime, timezone
 from bson import ObjectId
@@ -7,11 +8,13 @@ import numpy as np
 
 from app.database import get_db
 from app.embeddings.service import embed_text_cached, cosine_similarity
-from app.utils.pinecone_client import query_similar
+from app.utils.vector_store import query_similar
 from app.utils.citations import parse_citations, resolve_citations
 from app.chat.prompts import RAG_SYSTEM_PROMPT, build_context_block, build_rag_prompt
 from app.llm.provider import get_llm_provider
 from app.utils.helpers import utc_now
+
+logger = logging.getLogger(__name__)
 
 
 async def rag_generate(
@@ -20,10 +23,11 @@ async def rag_generate(
     user_id: str,
     chat_history: list = None,
     template: str = "default",
-    provider_name: str = "ollama",
+    provider_name: str = "gemini",
     top_k: int = 10,
     temperature: float = 0.0,
     use_mmr: bool = False,
+    paper_ids: list = None,
 ) -> AsyncGenerator[dict, None]:
     """
     Full RAG pipeline:
@@ -40,14 +44,29 @@ async def rag_generate(
     retrieval_start = datetime.now(timezone.utc)
 
     # Step 1: Embed the question
-    query_vector = embed_text_cached(question)
+    try:
+        query_vector = embed_text_cached(question)
+        logger.info(f"Embedded question (dim={len(query_vector)})")
+    except Exception as e:
+        logger.error(f"Embedding failed: {e}")
+        yield {"type": "error", "error": f"Embedding failed: {str(e)}"}
+        return
 
     # Step 2: Retrieve from Pinecone
-    raw_results = query_similar(
-        vector=query_vector,
-        top_k=top_k * 2 if use_mmr else top_k,  # Get more for MMR
-        namespace=workspace_id,
-    )
+    try:
+        filter_dict = None
+        if paper_ids:
+            filter_dict = {"paper_id": {"$in": paper_ids}}
+        raw_results = query_similar(
+            vector=query_vector,
+            top_k=top_k * 2 if use_mmr else top_k,  # Get more for MMR
+            namespace=workspace_id,
+            filter_dict=filter_dict,
+        )
+        logger.info(f"Pinecone returned {len(raw_results)} results for workspace {workspace_id}")
+    except Exception as e:
+        logger.error(f"Pinecone query failed: {e}")
+        raw_results = []
 
     # Step 3: MMR reranking if requested
     if use_mmr and raw_results:
@@ -94,13 +113,29 @@ async def rag_generate(
                 "score": r.get("score", 0),
             })
 
+    logger.info(f"Enriched {len(enriched_chunks)} chunks for RAG context")
+
     # Step 4: Build prompt
+    # If no chunks were retrieved, still let the LLM answer but warn the user
+    if not enriched_chunks:
+        logger.warning(f"No indexed chunks found for workspace {workspace_id}")
+        yield {
+            "type": "token",
+            "token": "⚠️ No indexed papers found in this workspace. I'll try to answer from general knowledge, but import and process papers for citation-grounded answers.\n\n",
+        }
+
     context_block = build_context_block(enriched_chunks)
     history_dicts = [{"role": m.get("role", "user"), "content": m.get("content", "")} for m in (chat_history or [])]
     prompt = build_rag_prompt(question, context_block, template, history_dicts)
 
     # Step 5: Get LLM provider
-    llm = await get_llm_provider(provider_name)
+    try:
+        llm = await get_llm_provider(provider_name)
+        logger.info(f"Using LLM provider: {llm.name}")
+    except Exception as e:
+        logger.error(f"Failed to get LLM provider '{provider_name}': {e}")
+        yield {"type": "error", "error": f"LLM provider unavailable: {str(e)}"}
+        return
 
     # Step 6: Stream generation
     generation_start = datetime.now(timezone.utc)

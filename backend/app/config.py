@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     CLOUDINARY_API_KEY: str = ""
     CLOUDINARY_API_SECRET: str = ""
 
+    # Supabase
+    SUPABASE_URL: str = ""
+    SUPABASE_ANON_KEY: str = ""
+    SUPABASE_BUCKET: str = "papers"
+
     # Gemini
     GEMINI_API_KEY: str = ""
 

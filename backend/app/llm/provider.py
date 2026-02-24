@@ -54,26 +54,29 @@ class GeminiProvider(LLMProvider):
         return await gemini_client.check_health()
 
 
-async def get_llm_provider(preference: str = "ollama") -> LLMProvider:
+async def get_llm_provider(preference: str = "gemini") -> LLMProvider:
     """
     Get LLM provider with fallback.
-    Tries Ollama first, falls back to Gemini if unavailable.
+    Default: Gemini first, Ollama fallback.
     """
-    if preference == "gemini":
-        gemini = GeminiProvider()
-        if await gemini.check_health():
-            return gemini
-        # Fallback to Ollama
+    if preference == "ollama":
         ollama = OllamaProvider()
         if await ollama.check_health():
             return ollama
-        return gemini  # Return anyway, will error on use
+        # Fall back to Gemini if Ollama is unavailable
+        gemini = GeminiProvider()
+        if await gemini.check_health():
+            return gemini
+        return ollama  # Return anyway, will error on use
 
-    # Default: try Ollama first
+    # Default: try Gemini first
+    gemini = GeminiProvider()
+    if await gemini.check_health():
+        return gemini
+
+    # Fallback to Ollama
     ollama = OllamaProvider()
     if await ollama.check_health():
         return ollama
 
-    # Fallback to Gemini
-    gemini = GeminiProvider()
-    return gemini
+    return gemini  # Return anyway, will error on use

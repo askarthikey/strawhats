@@ -1,12 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import api from "@/lib/api";
 import type { Draft } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Label } from "@/components/ui/label";
 import {
@@ -22,27 +20,20 @@ import {
   Plus,
   Loader2,
   Trash2,
-  Save,
-  History,
-  ArrowLeft,
   FileText,
+  Users,
+  Clock,
 } from "lucide-react";
 import { toast } from "sonner";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 
 export function DraftsPage() {
   const { workspaceId } = useParams<{ workspaceId: string }>();
+  const navigate = useNavigate();
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedDraft, setSelectedDraft] = useState<Draft | null>(null);
-  const [editContent, setEditContent] = useState("");
-  const [editTitle, setEditTitle] = useState("");
-  const [saving, setSaving] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [creating, setCreating] = useState(false);
-  const [previewMode, setPreviewMode] = useState(false);
 
   const loadDrafts = useCallback(async () => {
     if (!workspaceId) return;
@@ -66,16 +57,14 @@ export function DraftsPage() {
     try {
       const res = await api.post("/drafts/", {
         title: newTitle.trim(),
-        content: "",
+        content_markdown: "",
         workspace_id: workspaceId,
       });
-      setDrafts((prev) => [res.data, ...prev]);
       setShowCreate(false);
       setNewTitle("");
-      setSelectedDraft(res.data);
-      setEditContent("");
-      setEditTitle(res.data.title);
       toast.success("Draft created");
+      // Navigate to the new collaborative editor
+      navigate(`/workspace/${workspaceId}/drafts/${res.data.id}`);
     } catch {
       toast.error("Failed to create draft");
     } finally {
@@ -83,34 +72,12 @@ export function DraftsPage() {
     }
   };
 
-  const saveDraft = async () => {
-    if (!selectedDraft) return;
-    setSaving(true);
-    try {
-      const res = await api.put(`/drafts/${selectedDraft.id}`, {
-        title: editTitle,
-        content: editContent,
-      });
-      setSelectedDraft(res.data);
-      setDrafts((prev) =>
-        prev.map((d) => (d.id === selectedDraft.id ? res.data : d))
-      );
-      toast.success("Draft saved");
-    } catch {
-      toast.error("Failed to save draft");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const deleteDraft = async (id: string) => {
+  const deleteDraft = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
     if (!confirm("Delete this draft?")) return;
     try {
       await api.delete(`/drafts/${id}`);
       setDrafts((prev) => prev.filter((d) => d.id !== id));
-      if (selectedDraft?.id === id) {
-        setSelectedDraft(null);
-      }
       toast.success("Draft deleted");
     } catch {
       toast.error("Failed to delete draft");
@@ -118,80 +85,16 @@ export function DraftsPage() {
   };
 
   const openDraft = (draft: Draft) => {
-    setSelectedDraft(draft);
-    setEditContent(draft.content);
-    setEditTitle(draft.title);
-    setPreviewMode(false);
+    navigate(`/workspace/${workspaceId}/drafts/${draft.id}`);
   };
 
-  // Draft editor view
-  if (selectedDraft) {
-    return (
-      <div className="flex flex-col h-full">
-        <div className="flex items-center justify-between px-6 py-3 border-b border-border">
-          <div className="flex items-center gap-3">
-            <Button variant="ghost" size="sm" onClick={() => setSelectedDraft(null)}>
-              <ArrowLeft className="w-4 h-4 mr-1" />
-              Back
-            </Button>
-            <Input
-              value={editTitle}
-              onChange={(e) => setEditTitle(e.target.value)}
-              className="font-semibold border-none bg-transparent text-lg px-0 focus-visible:ring-0 w-auto"
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <Badge variant="outline" className="text-xs">
-              v{selectedDraft.version}
-            </Badge>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setPreviewMode(!previewMode)}
-            >
-              {previewMode ? "Edit" : "Preview"}
-            </Button>
-            <Button size="sm" onClick={saveDraft} disabled={saving}>
-              {saving ? (
-                <Loader2 className="w-4 h-4 animate-spin mr-1" />
-              ) : (
-                <Save className="w-4 h-4 mr-1" />
-              )}
-              Save
-            </Button>
-          </div>
-        </div>
-
-        <div className="flex-1 overflow-y-auto">
-          {previewMode ? (
-            <div className="max-w-3xl mx-auto p-8">
-              <div className="markdown-body">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                  {editContent || "*Empty draft*"}
-                </ReactMarkdown>
-              </div>
-            </div>
-          ) : (
-            <Textarea
-              value={editContent}
-              onChange={(e) => setEditContent(e.target.value)}
-              placeholder="Start writing your draft in Markdown..."
-              className="w-full h-full border-none rounded-none resize-none focus-visible:ring-0 p-8 text-sm leading-relaxed font-mono"
-            />
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // Drafts list view
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Drafts</h1>
           <p className="text-muted-foreground text-sm mt-1">
-            Write and collaborate on research documents
+            Write and collaborate on research documents in real-time
           </p>
         </div>
         <Button onClick={() => setShowCreate(true)}>
@@ -217,7 +120,7 @@ export function DraftsPage() {
             <PenTool className="w-12 h-12 text-muted-foreground mb-4" />
             <h3 className="text-lg font-medium mb-2">No drafts yet</h3>
             <p className="text-muted-foreground text-sm mb-6 text-center">
-              Create a draft to start writing your research paper.
+              Create a draft to start writing your research paper with real-time collaboration.
             </p>
             <Button onClick={() => setShowCreate(true)}>
               <Plus className="w-4 h-4 mr-2" />
@@ -236,13 +139,22 @@ export function DraftsPage() {
               <CardContent className="p-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <FileText className="w-5 h-5 text-muted-foreground" />
+                    <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                      <FileText className="w-5 h-5 text-primary" />
+                    </div>
                     <div>
                       <h3 className="font-medium text-foreground">{draft.title}</h3>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        v{draft.version} · Updated{" "}
-                        {new Date(draft.updated_at).toLocaleDateString()}
-                      </p>
+                      <div className="flex items-center gap-3 mt-0.5">
+                        <span className="text-xs text-muted-foreground flex items-center gap-1">
+                          <Clock className="w-3 h-3" />
+                          {new Date(draft.updated_at).toLocaleDateString()}
+                        </span>
+                        <span className="text-xs text-muted-foreground flex items-center gap-1">
+                          <Users className="w-3 h-3" />
+                          {draft.author_name}
+                        </span>
+                        <span className="text-xs text-muted-foreground">v{draft.version}</span>
+                      </div>
                     </div>
                   </div>
                   <div className="flex items-center gap-1">
@@ -250,10 +162,7 @@ export function DraftsPage() {
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        deleteDraft(draft.id);
-                      }}
+                      onClick={(e) => deleteDraft(draft.id, e)}
                     >
                       <Trash2 className="w-4 h-4 text-destructive" />
                     </Button>
@@ -270,7 +179,9 @@ export function DraftsPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Create Draft</DialogTitle>
-            <DialogDescription>Start a new research document</DialogDescription>
+            <DialogDescription>
+              Start a new collaborative research document
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-2">
@@ -279,6 +190,7 @@ export function DraftsPage() {
                 placeholder="e.g., Literature Review Section 3"
                 value={newTitle}
                 onChange={(e) => setNewTitle(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && createDraft()}
               />
             </div>
           </div>

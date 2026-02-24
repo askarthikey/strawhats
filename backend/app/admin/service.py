@@ -1,7 +1,7 @@
 """Admin service: health checks and metrics."""
 
 from app.database import get_db
-from app.utils.pinecone_client import get_index_stats
+from app.utils.vector_store import get_stats as get_index_stats
 from app.llm import ollama_client, gemini_client
 from app.config import settings
 

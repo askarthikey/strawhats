@@ -1,13 +1,11 @@
 import { NavLink, useLocation } from "react-router-dom";
 import {
   LayoutDashboard,
-  MessageSquare,
-  Search,
   FileText,
   PenTool,
-  Settings,
   Shield,
   BookOpen,
+  Users,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
@@ -15,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useState } from "react";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface SidebarProps {
   workspaceId?: string;
@@ -23,20 +22,20 @@ interface SidebarProps {
 export function Sidebar({ workspaceId }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
+  const { user } = useAuth();
 
   const navItems = [
     { icon: LayoutDashboard, label: "Dashboard", path: "/dashboard" },
     ...(workspaceId
       ? [
-          { icon: MessageSquare, label: "Chat", path: `/workspace/${workspaceId}/chat` },
-          { icon: Search, label: "Search", path: `/workspace/${workspaceId}/search` },
-          { icon: FileText, label: "Papers", path: `/workspace/${workspaceId}/papers` },
-          { icon: PenTool, label: "Drafts", path: `/workspace/${workspaceId}/drafts` },
-          { icon: BookOpen, label: "References", path: `/workspace/${workspaceId}/references` },
-        ]
+        { icon: FileText, label: "Research", path: `/workspace/${workspaceId}/papers` },
+        { icon: PenTool, label: "Drafts", path: `/workspace/${workspaceId}/drafts` },
+        { icon: Users, label: "Members", path: `/workspace/${workspaceId}/members` },
+      ]
       : []),
-    { icon: Settings, label: "Settings", path: "/settings" },
-    { icon: Shield, label: "Admin", path: "/admin" },
+    ...(!workspaceId && user?.role === "admin"
+      ? [{ icon: Shield, label: "Admin", path: "/admin" }]
+      : []),
   ];
 
   return (

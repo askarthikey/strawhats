@@ -66,7 +66,6 @@ export function DashboardPage() {
 
   const deleteWorkspace = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm("Delete this workspace? This cannot be undone.")) return;
     try {
       await api.delete(`/workspaces/${id}`);
       setWorkspaces((prev) => prev.filter((w) => w.id !== id));
@@ -128,7 +127,7 @@ export function DashboardPage() {
             <Card
               key={ws.id}
               className="cursor-pointer hover:border-primary/50 transition-colors group"
-              onClick={() => navigate(`/workspace/${ws.id}/chat`)}
+              onClick={() => navigate(`/workspace/${ws.id}/papers`)}
             >
               <CardHeader className="pb-3">
                 <div className="flex items-start justify-between">

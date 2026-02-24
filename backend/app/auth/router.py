@@ -25,6 +25,7 @@ async def register(user_data: UserCreate):
         "email": user_data.email,
         "full_name": user_data.full_name,
         "hashed_password": hash_password(user_data.password),
+        "role": "user",
         "created_at": datetime.now(timezone.utc),
         "updated_at": datetime.now(timezone.utc),
     }
@@ -32,7 +33,7 @@ async def register(user_data: UserCreate):
     user_id = str(result.inserted_id)
 
     # Generate token
-    token = create_access_token(user_id, user_data.email)
+    token = create_access_token(user_id, user_data.email, "user")
 
     return TokenResponse(
         access_token=token,
@@ -40,6 +41,7 @@ async def register(user_data: UserCreate):
             id=user_id,
             email=user_data.email,
             full_name=user_data.full_name,
+            role="user",
             created_at=user_doc["created_at"],
         ),
     )
@@ -57,7 +59,8 @@ async def login(user_data: UserLogin):
         )
 
     user_id = str(user["_id"])
-    token = create_access_token(user_id, user_data.email)
+    user_role = user.get("role", "user")
+    token = create_access_token(user_id, user_data.email, user_role)
 
     return TokenResponse(
         access_token=token,
@@ -65,6 +68,7 @@ async def login(user_data: UserLogin):
             id=user_id,
             email=user["email"],
             full_name=user["full_name"],
+            role=user_role,
             created_at=user["created_at"],
         ),
     )
@@ -80,5 +84,6 @@ async def get_current_user_info(current_user: dict = Depends(get_current_user)):
         id=current_user["id"],
         email=current_user["email"],
         full_name=current_user["full_name"],
+        role=current_user.get("role", "user"),
         created_at=current_user["created_at"],
     )

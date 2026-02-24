@@ -6,7 +6,7 @@ from bson import ObjectId
 
 from app.database import get_db
 from app.embeddings.service import embed_text_cached
-from app.utils.pinecone_client import query_similar
+from app.utils.vector_store import query_similar
 from app.chat.service import mmr_rerank
 from app.search.schemas import SearchResult
 
@@ -14,13 +14,14 @@ from app.search.schemas import SearchResult
 async def semantic_search(
     query: str,
     workspace_id: str,
-    top_k: int = 10,
-    use_mmr: bool = False,
+    top_k: int = 8,
+    use_mmr: bool = True,
     year_from: int = None,
     year_to: int = None,
 ) -> tuple[List[SearchResult], float]:
     """
     Semantic search: embed query → Pinecone → resolve metadata.
+    Deduplicates by paper_id (keeps best chunk per paper).
     Returns (results, search_time_ms).
     """
     start = datetime.now(timezone.utc)
@@ -29,26 +30,32 @@ async def semantic_search(
     # Embed query
     query_vector = embed_text_cached(query)
 
-    # Build Pinecone filter
-    filter_dict = {}
-    # Note: Pinecone metadata filtering is limited on free tier
-    # We do post-filtering for year/venue
-
-    # Query Pinecone
-    fetch_k = top_k * 3 if use_mmr else top_k * 2
+    # Query Pinecone — fetch extra to allow dedup & MMR
+    fetch_k = top_k * 5
     raw_results = query_similar(
         vector=query_vector,
         top_k=fetch_k,
         namespace=workspace_id,
     )
 
-    # MMR reranking
-    if use_mmr:
-        raw_results = mmr_rerank(raw_results, query_vector, top_k=top_k)
+    # MMR reranking for diversity (always enabled)
+    if use_mmr and len(raw_results) > top_k:
+        raw_results = mmr_rerank(raw_results, query_vector, top_k=fetch_k)
+
+    # Deduplicate by paper_id — keep only the best-scoring chunk per paper
+    seen_papers = {}
+    for r in raw_results:
+        metadata = r.get("metadata", {})
+        paper_id = metadata.get("paper_id", r["id"])
+        score = r.get("score", 0)
+        if paper_id not in seen_papers or score > seen_papers[paper_id].get("score", 0):
+            seen_papers[paper_id] = r
+
+    deduped_results = sorted(seen_papers.values(), key=lambda x: x.get("score", 0), reverse=True)
 
     # Resolve full metadata from MongoDB
     results = []
-    for r in raw_results[:top_k]:
+    for r in deduped_results[:top_k]:
         chunk_id = r["id"]
         metadata = r.get("metadata", {})
         paper_id = metadata.get("paper_id", "")
@@ -67,12 +74,15 @@ async def semantic_search(
         if paper and year_to and paper.get("year") and paper["year"] > year_to:
             continue
 
-        # Get chunk text
+        # Get chunk text with sentence-level context
         chunk_text = metadata.get("text_preview", "")
         try:
             chunk_doc = await db.chunks.find_one({"_id": ObjectId(chunk_id)})
             if chunk_doc:
-                chunk_text = chunk_doc.get("text", chunk_text)
+                full_text = chunk_doc.get("text", chunk_text)
+                # Extract 2-3 meaningful sentences as snippet
+                sentences = [s.strip() for s in full_text.replace("\n", " ").split(".") if len(s.strip()) > 20]
+                chunk_text = ". ".join(sentences[:3]) + "." if sentences else full_text[:300]
         except Exception:
             pass
 
@@ -84,7 +94,7 @@ async def semantic_search(
             year=paper.get("year") if paper else None,
             venue=paper.get("venue") if paper else None,
             page_number=metadata.get("page_number"),
-            snippet=chunk_text[:300],
+            snippet=chunk_text[:500],
             score=r.get("score", 0),
             doi=paper.get("doi") if paper else None,
         ))

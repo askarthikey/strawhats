@@ -11,8 +11,9 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     question: str
     workspace_id: str
+    paper_ids: Optional[List[str]] = None  # Filter to specific papers
     template: str = "default"  # default, summarize, compare, extract_methods, generate_review
-    provider: str = "ollama"  # ollama, gemini
+    provider: str = "gemini"  # gemini, ollama
     top_k: int = Field(default=10, ge=1, le=50)
     temperature: float = Field(default=0.0, ge=0.0, le=1.0)
     use_mmr: bool = False

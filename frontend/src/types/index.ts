@@ -3,6 +3,7 @@ export interface User {
   id: string;
   email: string;
   full_name: string;
+  role?: string;
   created_at: string;
 }
 
@@ -68,10 +69,13 @@ export interface SearchResult {
   chunk_id: string;
   paper_id: string;
   paper_title: string;
-  text: string;
+  authors: string[];
+  year: number | null;
+  venue: string | null;
+  page_number: number | null;
+  snippet: string;
   score: number;
-  page_number: number;
-  chunk_index: number;
+  doi: string | null;
 }
 
 export interface SearchRequest {
@@ -93,11 +97,14 @@ export interface ChatMessage {
 
 export interface Citation {
   chunk_id: string;
-  paper_id: string;
-  paper_title: string;
-  text_preview: string;
-  page_number: number;
-  citation_number: number;
+  paper_id: string | null;
+  title: string;
+  authors: string[];
+  page: number | null;
+  snippet: string;
+  year: number | null;
+  doi: string | null;
+  citation_number?: number;
 }
 
 export interface ChatRequest {
@@ -117,10 +124,12 @@ export interface ChatStreamEvent {
 export interface Draft {
   id: string;
   title: string;
-  content: string;
+  content_markdown: string;
   workspace_id: string;
-  created_by: string;
+  author_id: string;
+  author_name: string;
   version: number;
+  referenced_chunk_ids: string[];
   created_at: string;
   updated_at: string;
 }

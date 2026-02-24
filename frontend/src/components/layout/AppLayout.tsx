@@ -1,13 +1,51 @@
-import { Outlet, useParams, Navigate } from "react-router-dom";
+import { Outlet, useParams, Navigate, useLocation } from "react-router-dom";
 import { Sidebar } from "./Sidebar";
 import { Header } from "./Header";
 import { useAuth } from "@/contexts/AuthContext";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useEffect, useState } from "react";
+import api from "@/lib/api";
 
 export function AppLayout() {
   const { user, isLoading } = useAuth();
   const { workspaceId } = useParams();
+  const location = useLocation();
+  const [workspaceName, setWorkspaceName] = useState<string>("");
+
+  useEffect(() => {
+    if (workspaceId) {
+      api.get(`/workspaces/${workspaceId}`)
+        .then((res) => setWorkspaceName(res.data.name || ""))
+        .catch(() => setWorkspaceName(""));
+    } else {
+      setWorkspaceName("");
+    }
+  }, [workspaceId]);
+
+  // Build breadcrumbs from path
+  const buildBreadcrumbs = () => {
+    const crumbs: { label: string; path?: string }[] = [];
+    const path = location.pathname;
+
+    if (path === "/dashboard") {
+      crumbs.push({ label: "Dashboard" });
+    } else if (path === "/admin") {
+      crumbs.push({ label: "Admin" });
+    } else if (path === "/settings") {
+      crumbs.push({ label: "Settings" });
+    } else if (workspaceId) {
+      crumbs.push({ label: "Dashboard", path: "/dashboard" });
+      crumbs.push({ label: workspaceName || "Workspace", path: `/workspace/${workspaceId}/papers` });
+
+      if (path.includes("/papers")) crumbs.push({ label: "Research" });
+      else if (path.includes("/drafts/")) crumbs.push({ label: "Drafts", path: `/workspace/${workspaceId}/drafts` }, { label: "Editor" });
+      else if (path.includes("/drafts")) crumbs.push({ label: "Drafts" });
+      else if (path.includes("/members")) crumbs.push({ label: "Members" });
+    }
+
+    return crumbs;
+  };
 
   if (isLoading) {
     return (
@@ -44,7 +82,7 @@ export function AppLayout() {
       <div className="flex h-screen bg-background overflow-hidden">
         <Sidebar workspaceId={workspaceId} />
         <div className="flex-1 flex flex-col overflow-hidden">
-          <Header />
+          <Header breadcrumbs={buildBreadcrumbs()} />
           <main className="flex-1 overflow-y-auto">
             <Outlet />
           </main>

@@ -259,7 +259,7 @@ async def fetch_unpaywall_pdf(doi: str) -> Optional[str]:
     """Get OA PDF URL from Unpaywall if available."""
     if not doi:
         return None
-    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+    async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True) as client:
         try:
             resp = await client.get(
                 f"https://api.unpaywall.org/v2/{doi}",

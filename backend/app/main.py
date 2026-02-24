@@ -16,9 +16,12 @@ from app.search.router import router as search_router
 from app.chat.router import router as chat_router
 from app.workspaces.router import router as workspaces_router
 from app.drafts.router import router as drafts_router
+from app.drafts.websocket import router as drafts_ws_router
+from app.drafts.ai_router import router as drafts_ai_router
 from app.references.router import router as references_router
 from app.latex.router import router as latex_router
 from app.admin.router import router as admin_router
+from app.papers.status_ws import router as papers_ws_router
 
 
 @asynccontextmanager
@@ -32,11 +35,23 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"⚠️  MongoDB connection failed (will retry on use): {e}")
 
+    # Initialize FAISS (primary vector store)
+    try:
+        from app.utils.faiss_client import _ensure_dir, FAISS_AVAILABLE
+        _ensure_dir()
+        if FAISS_AVAILABLE:
+            print("✅ FAISS vector store ready (primary)")
+        else:
+            print("⚠️  FAISS not available — install faiss-cpu for local vector store")
+    except Exception as e:
+        print(f"⚠️  FAISS init failed: {e}")
+
+    # Initialize Pinecone (fallback/mirror)
     try:
         init_pinecone()
-        print("✅ Pinecone initialized")
+        print("✅ Pinecone initialized (fallback)")
     except Exception as e:
-        print(f"⚠️  Pinecone init failed (will retry on use): {e}")
+        print(f"⚠️  Pinecone init skipped (FAISS is primary): {e}")
 
     # Pre-load embedding model in background
     try:
@@ -46,13 +61,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"⚠️  Embedding model will load on first use: {e}")
 
-    # Ensure Cloudinary connectivity
+    # Ensure Supabase Storage connectivity
     try:
-        from app.storage.cloudinary_client import ensure_storage
+        from app.storage.supabase_client import ensure_storage
         await ensure_storage()
-        print("✅ Cloudinary storage ready")
+        print("✅ Supabase storage ready")
     except Exception as e:
-        print(f"⚠️  Cloudinary storage setup deferred: {e}")
+        print(f"⚠️  Supabase storage setup deferred: {e}")
 
     print(f"✅ {settings.APP_NAME} is ready!")
     yield
@@ -91,6 +106,9 @@ app.include_router(search_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
 app.include_router(workspaces_router, prefix="/api")
 app.include_router(drafts_router, prefix="/api")
+app.include_router(drafts_ws_router)  # WebSocket routes (no prefix)
+app.include_router(papers_ws_router)  # Paper status WebSocket (no prefix)
+app.include_router(drafts_ai_router, prefix="/api")
 app.include_router(references_router, prefix="/api")
 app.include_router(latex_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")

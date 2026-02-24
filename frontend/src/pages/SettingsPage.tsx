@@ -2,10 +2,16 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { User, Mail, Calendar } from "lucide-react";
+import { User, Mail, Calendar, Moon, Sun } from "lucide-react";
+import { useState } from "react";
 
 export function SettingsPage() {
   const { user } = useAuth();
+  const [theme, setTheme] = useState("Supabase Dark");
+
+  const toggleTheme = () => {
+    setTheme(prev => prev === "Supabase Dark" ? "Supabase Light" : "Supabase Dark");
+  };
 
   return (
     <div className="p-6 max-w-2xl mx-auto">
@@ -56,7 +62,14 @@ export function SettingsPage() {
         <CardContent className="space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-sm text-muted-foreground">Theme</span>
-            <Badge variant="secondary">Supabase Dark</Badge>
+            <Badge
+              variant="secondary"
+              className="cursor-pointer hover:bg-secondary/80 flex items-center gap-1"
+              onClick={toggleTheme}
+            >
+              {theme === "Supabase Dark" ? <Moon className="w-3 h-3" /> : <Sun className="w-3 h-3" />}
+              {theme}
+            </Badge>
           </div>
           <Separator />
           <div className="flex items-center justify-between">
