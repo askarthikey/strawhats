@@ -44,7 +44,6 @@ class PaperResponse(BaseModel):
     pdf_url: Optional[str] = None
     storage_path: Optional[str] = None
     status: PaperStatus = PaperStatus.PENDING
-    status_reason: Optional[str] = None
     chunk_count: int = 0
     workspace_id: str
     created_at: datetime

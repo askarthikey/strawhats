@@ -44,23 +44,6 @@ import "katex/dist/katex.min.css";
 
 type EditorMode = "markdown" | "latex";
 
-const DEFAULT_LATEX_TEMPLATE = `\\documentclass{article}
-\\usepackage{amsmath, amssymb, booktabs, graphicx, hyperref}
-\\usepackage[margin=1in]{geometry}
-
-\\title{Your Paper Title}
-\\author{Author Name}
-\\date{\\today}
-
-\\begin{document}
-\\maketitle
-
-\\section{Introduction}
-Your content here...
-
-\\end{document}
-`;
-
 interface ActiveUser {
     user_id: string;
     full_name: string;
@@ -85,7 +68,6 @@ export function DraftEditor() {
 
     const [title, setTitle] = useState("");
     const [content, setContent] = useState("");
-    const [contentLatex, setContentLatex] = useState("");
     const [saving, setSaving] = useState(false);
     const [saved, setSaved] = useState(true);
     const [connected, setConnected] = useState(false);
@@ -118,9 +100,6 @@ export function DraftEditor() {
                 const res = await api.get(`/drafts/${draftId}`);
                 setTitle(res.data.title || "");
                 setContent(res.data.content_markdown || "");
-                if (res.data.content_latex) {
-                    setContentLatex(res.data.content_latex);
-                }
             } catch {
                 toast.error("Failed to load draft");
             } finally {
@@ -157,7 +136,6 @@ export function DraftEditor() {
                         if (data.content !== undefined) {
                             isRemoteUpdate.current = true;
                             setContent(data.content);
-                            if (data.content_latex) setContentLatex(data.content_latex);
                             if (data.title) setTitle(data.title);
                             setTimeout(() => {
                                 isRemoteUpdate.current = false;
@@ -168,11 +146,7 @@ export function DraftEditor() {
                     case "operation":
                         if (data.user_id !== user?.id) {
                             isRemoteUpdate.current = true;
-                            if (data.content_type === "latex") {
-                                setContentLatex(data.content);
-                            } else {
-                                setContent(data.content);
-                            }
+                            setContent(data.content);
                             setTimeout(() => {
                                 isRemoteUpdate.current = false;
                             }, 50);
@@ -247,6 +221,7 @@ export function DraftEditor() {
         };
     }, []);
 
+    // Send content changes via WebSocket with debounce
     const sendOperation = useCallback(
         (newContent: string) => {
             if (
@@ -257,7 +232,6 @@ export function DraftEditor() {
                     JSON.stringify({
                         type: "operation",
                         content: newContent,
-                        content_type: editorMode,
                         version: Date.now(),
                     })
                 );
@@ -272,7 +246,7 @@ export function DraftEditor() {
                 }, 2500);
             }
         },
-        [editorMode]
+        []
     );
 
     // --- Inline AI ghost text ---
@@ -325,15 +299,10 @@ export function DraftEditor() {
 
     const acceptGhostText = useCallback(() => {
         if (!ghostText || !editorRef.current) return;
-        const activeContent = editorMode === "latex" ? contentLatex : content;
-        const before = activeContent.substring(0, ghostCursorPos);
-        const after = activeContent.substring(ghostCursorPos);
+        const before = content.substring(0, ghostCursorPos);
+        const after = content.substring(ghostCursorPos);
         const newContent = before + ghostText + after;
-        if (editorMode === "latex") {
-            setContentLatex(newContent);
-        } else {
-            setContent(newContent);
-        }
+        setContent(newContent);
         sendOperation(newContent);
         setGhostText("");
 
@@ -343,7 +312,7 @@ export function DraftEditor() {
             editorRef.current?.setSelectionRange(newPos, newPos);
             editorRef.current?.focus();
         }, 10);
-    }, [ghostText, ghostCursorPos, content, contentLatex, editorMode, sendOperation]);
+    }, [ghostText, ghostCursorPos, content, sendOperation]);
 
     const dismissGhostText = useCallback(() => {
         if (abortRef.current) abortRef.current.abort();
@@ -354,11 +323,7 @@ export function DraftEditor() {
     // Handle content change
     const handleContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
         const newContent = e.target.value;
-        if (editorMode === "latex") {
-            setContentLatex(newContent);
-        } else {
-            setContent(newContent);
-        }
+        setContent(newContent);
         sendOperation(newContent);
 
         // Dismiss current ghost text on any edit
@@ -386,9 +351,8 @@ export function DraftEditor() {
         const editor = editorRef.current;
         if (!editor || wsRef.current?.readyState !== WebSocket.OPEN) return;
 
-        const activeContent = editorMode === "latex" ? contentLatex : content;
         const pos = editor.selectionStart;
-        const lines = activeContent.substring(0, pos).split("\n");
+        const lines = content.substring(0, pos).split("\n");
         const line = lines.length - 1;
         const ch = lines[lines.length - 1].length;
 
@@ -411,22 +375,17 @@ export function DraftEditor() {
         const editor = editorRef.current;
         if (!editor) return;
 
-        const activeContent = editorMode === "latex" ? contentLatex : content;
         const start = editor.selectionStart;
         const end = editor.selectionEnd;
-        const selected = activeContent.substring(start, end);
+        const selected = content.substring(start, end);
         const newContent =
-            activeContent.substring(0, start) +
+            content.substring(0, start) +
             before +
             selected +
             after +
-            activeContent.substring(end);
+            content.substring(end);
 
-        if (editorMode === "latex") {
-            setContentLatex(newContent);
-        } else {
-            setContent(newContent);
-        }
+        setContent(newContent);
         sendOperation(newContent);
 
         // Set cursor after inserted text
@@ -439,7 +398,7 @@ export function DraftEditor() {
 
     // --- LaTeX Compilation ---
     const compileLatex = async () => {
-        if (!contentLatex.trim()) {
+        if (!content.trim()) {
             toast.info("Write some LaTeX content first");
             return;
         }
@@ -448,7 +407,7 @@ export function DraftEditor() {
         setPdfUrl(null);
 
         try {
-            const res = await api.post("/latex/compile", { source: contentLatex });
+            const res = await api.post("/latex/compile", { source: content });
             if (res.data.success) {
                 // Convert base64 to blob URL
                 const binaryStr = atob(res.data.pdf_base64);
@@ -514,15 +473,9 @@ export function DraftEditor() {
 
     const acceptSuggestion = () => {
         if (aiSuggestion) {
-            if (editorMode === "latex") {
-                const newContent = contentLatex + "\n" + aiSuggestion;
-                setContentLatex(newContent);
-                sendOperation(newContent);
-            } else {
-                const newContent = content + "\n" + aiSuggestion;
-                setContent(newContent);
-                sendOperation(newContent);
-            }
+            const newContent = content + "\n" + aiSuggestion;
+            setContent(newContent);
+            sendOperation(newContent);
             setAiSuggestion("");
             toast.success("Suggestion added!");
         }
@@ -611,12 +564,7 @@ export function DraftEditor() {
                     </button>
                     <button
                         className={`px-2 py-1 text-xs rounded-sm transition-colors ${editorMode === "latex" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-                        onClick={() => {
-                            setEditorMode("latex");
-                            if (!contentLatex.trim()) {
-                                setContentLatex(DEFAULT_LATEX_TEMPLATE);
-                            }
-                        }}
+                        onClick={() => setEditorMode("latex")}
                     >
                         LaTeX
                     </button>
@@ -768,7 +716,7 @@ export function DraftEditor() {
                 <div className="flex-1 relative">
                     <textarea
                         ref={editorRef}
-                        value={editorMode === "latex" ? contentLatex : content}
+                        value={content}
                         onChange={handleContentChange}
                         onClick={handleCursorChange}
                         onKeyUp={handleCursorChange}
@@ -821,7 +769,7 @@ Your content here...
                             aria-hidden="true"
                         >
                             <pre className="text-sm font-mono leading-relaxed whitespace-pre-wrap break-words m-0">
-                                <span className="invisible">{(editorMode === "latex" ? contentLatex : content).substring(0, ghostCursorPos)}</span>
+                                <span className="invisible">{content.substring(0, ghostCursorPos)}</span>
                                 <span className="text-muted-foreground/50 italic">{ghostText}</span>
                             </pre>
                         </div>

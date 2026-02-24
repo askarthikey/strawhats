@@ -46,7 +46,6 @@ export interface Paper {
   source: string;
   workspace_id: string;
   status: PaperStatus;
-  status_reason?: string;
   storage_path: string | null;
   chunk_count: number;
   created_at: string;

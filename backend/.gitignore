@@ -7,6 +7,11 @@
 __pycache__/
 *.py[cod]
 
+# Environment
+.env
+.env.*
+!.env.example
+
 # ML models & embeddings cache
 sentence-transformers/
 models/
