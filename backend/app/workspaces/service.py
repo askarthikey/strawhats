@@ -195,7 +195,8 @@ async def check_permission(workspace_id: str, user_id: str, required_role: Membe
     """Check if user has at least the required role in workspace."""
     db = get_db()
     role_hierarchy = {
-        MemberRole.OWNER: 4,
+        MemberRole.OWNER: 5,
+        MemberRole.ADMIN: 4,
         MemberRole.EDITOR: 3,
         MemberRole.COMMENTER: 2,
         MemberRole.VIEWER: 1,
@@ -215,3 +216,42 @@ async def check_permission(workspace_id: str, user_id: str, required_role: Membe
             return user_level >= required_level
 
     return False
+
+
+async def get_member_role(workspace_id: str, user_id: str) -> Optional[str]:
+    """Get the role of a user in a workspace."""
+    db = get_db()
+    workspace = await db.workspaces.find_one({
+        "_id": ObjectId(workspace_id),
+        "members.user_id": user_id,
+    })
+    if not workspace:
+        return None
+    for member in workspace.get("members", []):
+        if member["user_id"] == user_id:
+            return member["role"]
+    return None
+
+
+async def update_member_role(workspace_id: str, target_user_id: str, new_role: MemberRole) -> bool:
+    """Update a member's role. Cannot change the owner's role."""
+    db = get_db()
+
+    # Prevent changing owner's role
+    workspace = await db.workspaces.find_one({"_id": ObjectId(workspace_id)})
+    if not workspace:
+        return False
+
+    for member in workspace.get("members", []):
+        if member["user_id"] == target_user_id and member["role"] == MemberRole.OWNER:
+            return False  # Cannot change owner's role
+
+    # Prevent assigning owner role
+    if new_role == MemberRole.OWNER:
+        return False
+
+    result = await db.workspaces.update_one(
+        {"_id": ObjectId(workspace_id), "members.user_id": target_user_id},
+        {"$set": {"members.$.role": new_role}},
+    )
+    return result.modified_count > 0

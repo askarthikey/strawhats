@@ -85,20 +85,21 @@ async def _compute_draft_contributions(workspace_id: str) -> Dict:
                 user_chars[author_id] = max(draft_info["content_length"], 1)
                 user_names[author_id] = draft_info["author_name"]
         else:
-            for ver in versions:
+            for idx, ver in enumerate(versions):
                 author_id = ver.get("author_id", "")
                 if not author_id:
                     continue
                 user_names[author_id] = ver.get("author_name", "")
 
-                if ver.get("version", 1) == 1:
-                    # First version — attribute full content length
+                if idx == 0:
+                    # First recorded version — attribute full content length
                     content_len = len(ver.get("content_markdown", ""))
                     user_chars[author_id] += max(content_len, 1)
                 else:
                     # Subsequent versions — use diff_summary
                     chars_added = _parse_chars_added(ver.get("diff_summary", ""))
-                    user_chars[author_id] += chars_added
+                    # Give at least 1 char credit so the contributor isn't invisible
+                    user_chars[author_id] += max(chars_added, 1)
 
         # Calculate percentages
         total_chars = sum(user_chars.values())
@@ -208,7 +209,8 @@ async def get_workspace_analytics(workspace_id: str) -> Optional[dict]:
             "total_score": total_score,
         })
 
-    contributors.sort(key=lambda c: c["total_score"], reverse=True)
+    role_rank = {"owner": 5, "admin": 4, "editor": 3, "commenter": 2, "viewer": 1}
+    contributors.sort(key=lambda c: (c["total_score"], role_rank.get(c["role"], 0)), reverse=True)
 
     # --- Activity timeline (last 12 months) ---
     now = datetime.now(timezone.utc)

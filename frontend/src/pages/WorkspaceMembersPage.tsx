@@ -24,6 +24,7 @@ import {
     Check,
     Crown,
     Shield,
+    ShieldCheck,
     User as UserIcon,
     Loader2,
 } from "lucide-react";
@@ -48,6 +49,12 @@ export function WorkspaceMembersPage() {
     const [inviteLink, setInviteLink] = useState<string | null>(null);
     const [linkCopied, setLinkCopied] = useState(false);
     const [generatingLink, setGeneratingLink] = useState(false);
+    const [updatingRole, setUpdatingRole] = useState<string | null>(null);
+
+    // Determine current user's role in this workspace
+    const currentMember = members.find((m) => m.user_id === user?.id);
+    const myRole = currentMember?.role || "viewer";
+    const canManageRoles = myRole === "owner" || myRole === "admin";
 
     useEffect(() => {
         if (workspaceId) loadMembers();
@@ -119,16 +126,51 @@ export function WorkspaceMembersPage() {
         }
     };
 
+    const updateRole = async (userId: string, newRole: string) => {
+        setUpdatingRole(userId);
+        try {
+            await api.patch(`/workspaces/${workspaceId}/members/${userId}/role`, {
+                role: newRole,
+            });
+            setMembers((prev) =>
+                prev.map((m) => (m.user_id === userId ? { ...m, role: newRole } : m))
+            );
+            toast.success("Role updated");
+        } catch (err: any) {
+            toast.error(err.response?.data?.detail || "Failed to update role");
+        } finally {
+            setUpdatingRole(null);
+        }
+    };
+
     const roleIcon = (role: string) => {
         if (role === "owner") return <Crown className="w-3.5 h-3.5 text-amber-500" />;
+        if (role === "admin") return <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />;
         if (role === "editor") return <Shield className="w-3.5 h-3.5 text-blue-500" />;
         return <UserIcon className="w-3.5 h-3.5 text-muted-foreground" />;
     };
 
-    const roleBadgeVariant = (role: string) => {
-        if (role === "owner") return "default" as const;
-        if (role === "editor") return "secondary" as const;
-        return "outline" as const;
+    const roleBadgeClass = (role: string) => {
+        if (role === "owner") return "bg-amber-500/15 text-amber-400 border-amber-500/30";
+        if (role === "admin") return "bg-emerald-500/15 text-emerald-400 border-emerald-500/30";
+        if (role === "editor") return "bg-blue-500/15 text-blue-400 border-blue-500/30";
+        return "bg-gray-500/15 text-gray-400 border-gray-500/30";
+    };
+
+    /**
+     * Determine which roles the current user can assign to a given member.
+     * - Owner can assign: viewer, editor, admin
+     * - Admin can assign: viewer, editor (not admin, not to other admins/owner)
+     */
+    const getAssignableRoles = (member: Member): string[] => {
+        if (member.role === "owner") return []; // can never change owner
+        if (member.user_id === user?.id) return []; // can't change own role
+        if (myRole === "owner") return ["viewer", "editor", "admin"];
+        if (myRole === "admin") {
+            if (member.role === "admin") return []; // admin can't change other admins
+            return ["viewer", "editor"];
+        }
+        return [];
     };
 
     return (
@@ -144,78 +186,83 @@ export function WorkspaceMembersPage() {
             </div>
 
             {/* Invite by Email */}
-            <Card>
-                <CardHeader>
-                    <CardTitle className="text-base flex items-center gap-2">
-                        <UserPlus className="w-4 h-4" />
-                        Invite Members
-                    </CardTitle>
-                    <CardDescription>Add collaborators by email address</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                    <div className="flex gap-2">
-                        <Input
-                            placeholder="colleague@university.edu"
-                            type="email"
-                            value={inviteEmail}
-                            onChange={(e) => setInviteEmail(e.target.value)}
-                            onKeyDown={(e) => e.key === "Enter" && inviteMember()}
-                            className="flex-1"
-                        />
-                        <Select value={inviteRole} onValueChange={setInviteRole}>
-                            <SelectTrigger className="w-28">
-                                <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="viewer">Viewer</SelectItem>
-                                <SelectItem value="editor">Editor</SelectItem>
-                            </SelectContent>
-                        </Select>
-                        <Button onClick={inviteMember} disabled={inviting || !inviteEmail.trim()}>
-                            {inviting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Invite"}
-                        </Button>
-                    </div>
-
-                    <Separator />
-
-                    {/* Invite Link */}
-                    <div>
-                        <p className="text-sm text-muted-foreground mb-2">Or share an invite link</p>
+            {canManageRoles && (
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="text-base flex items-center gap-2">
+                            <UserPlus className="w-4 h-4" />
+                            Invite Members
+                        </CardTitle>
+                        <CardDescription>Add collaborators by email address</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
                         <div className="flex gap-2">
-                            <Button
-                                variant="outline"
-                                onClick={generateInviteLink}
-                                disabled={generatingLink}
-                                className="gap-2"
-                            >
-                                {generatingLink ? (
-                                    <Loader2 className="w-4 h-4 animate-spin" />
-                                ) : (
-                                    <Link className="w-4 h-4" />
-                                )}
-                                Generate Link
+                            <Input
+                                placeholder="colleague@university.edu"
+                                type="email"
+                                value={inviteEmail}
+                                onChange={(e) => setInviteEmail(e.target.value)}
+                                onKeyDown={(e) => e.key === "Enter" && inviteMember()}
+                                className="flex-1"
+                            />
+                            <Select value={inviteRole} onValueChange={setInviteRole}>
+                                <SelectTrigger className="w-28">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="viewer">Viewer</SelectItem>
+                                    <SelectItem value="editor">Editor</SelectItem>
+                                    {myRole === "owner" && (
+                                        <SelectItem value="admin">Admin</SelectItem>
+                                    )}
+                                </SelectContent>
+                            </Select>
+                            <Button onClick={inviteMember} disabled={inviting || !inviteEmail.trim()}>
+                                {inviting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Invite"}
                             </Button>
+                        </div>
+
+                        <Separator />
+
+                        {/* Invite Link */}
+                        <div>
+                            <p className="text-sm text-muted-foreground mb-2">Or share an invite link</p>
+                            <div className="flex gap-2">
+                                <Button
+                                    variant="outline"
+                                    onClick={generateInviteLink}
+                                    disabled={generatingLink}
+                                    className="gap-2"
+                                >
+                                    {generatingLink ? (
+                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                    ) : (
+                                        <Link className="w-4 h-4" />
+                                    )}
+                                    Generate Link
+                                </Button>
+                                {inviteLink && (
+                                    <div className="flex-1 flex gap-2">
+                                        <Input value={inviteLink} readOnly className="text-xs" />
+                                        <Button size="icon" variant="outline" onClick={copyLink}>
+                                            {linkCopied ? (
+                                                <Check className="w-4 h-4 text-green-500" />
+                                            ) : (
+                                                <Copy className="w-4 h-4" />
+                                            )}
+                                        </Button>
+                                    </div>
+                                )}
+                            </div>
                             {inviteLink && (
-                                <div className="flex-1 flex gap-2">
-                                    <Input value={inviteLink} readOnly className="text-xs" />
-                                    <Button size="icon" variant="outline" onClick={copyLink}>
-                                        {linkCopied ? (
-                                            <Check className="w-4 h-4 text-green-500" />
-                                        ) : (
-                                            <Copy className="w-4 h-4" />
-                                        )}
-                                    </Button>
-                                </div>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                    Expires in 48 hours • Role: {inviteRole}
+                                </p>
                             )}
                         </div>
-                        {inviteLink && (
-                            <p className="text-xs text-muted-foreground mt-1">
-                                Expires in 48 hours • Role: {inviteRole}
-                            </p>
-                        )}
-                    </div>
-                </CardContent>
-            </Card>
+                    </CardContent>
+                </Card>
+            )}
 
             {/* Members List */}
             <Card>
@@ -239,45 +286,88 @@ export function WorkspaceMembersPage() {
                         </p>
                     ) : (
                         <div className="space-y-1">
-                            {members.map((member, i) => (
-                                <div key={member.user_id}>
-                                    {i > 0 && <Separator className="my-2" />}
-                                    <div className="flex items-center justify-between py-2">
-                                        <div className="flex items-center gap-3">
-                                            <div className={`w-9 h-9 rounded-full flex items-center justify-center ${getUserColor(member.user_id).bg}`}>
-                                                <span className={`text-sm font-medium ${getUserColor(member.user_id).text}`}>
-                                                    {member.full_name?.charAt(0)?.toUpperCase() || "?"}
-                                                </span>
+                            {members.map((member, i) => {
+                                const assignableRoles = getAssignableRoles(member);
+                                const canEdit = assignableRoles.length > 0;
+                                const canRemove =
+                                    member.role !== "owner" &&
+                                    member.user_id !== user?.id &&
+                                    canManageRoles &&
+                                    // Admin can't remove other admins
+                                    !(myRole === "admin" && member.role === "admin");
+
+                                return (
+                                    <div key={member.user_id}>
+                                        {i > 0 && <Separator className="my-2" />}
+                                        <div className="flex items-center justify-between py-2">
+                                            <div className="flex items-center gap-3">
+                                                <div className={`w-9 h-9 rounded-full flex items-center justify-center ${getUserColor(member.user_id).bg}`}>
+                                                    <span className={`text-sm font-medium ${getUserColor(member.user_id).text}`}>
+                                                        {member.full_name?.charAt(0)?.toUpperCase() || "?"}
+                                                    </span>
+                                                </div>
+                                                <div>
+                                                    <p className="text-sm font-medium text-foreground">
+                                                        {member.full_name}
+                                                        {member.user_id === user?.id && (
+                                                            <span className="text-muted-foreground ml-1">(you)</span>
+                                                        )}
+                                                    </p>
+                                                    <p className="text-xs text-muted-foreground">{member.email}</p>
+                                                </div>
                                             </div>
-                                            <div>
-                                                <p className="text-sm font-medium text-foreground">
-                                                    {member.full_name}
-                                                    {member.user_id === user?.id && (
-                                                        <span className="text-muted-foreground ml-1">(you)</span>
-                                                    )}
-                                                </p>
-                                                <p className="text-xs text-muted-foreground">{member.email}</p>
+                                            <div className="flex items-center gap-2">
+                                                {canEdit ? (
+                                                    <Select
+                                                        value={member.role}
+                                                        onValueChange={(newRole) => updateRole(member.user_id, newRole)}
+                                                        disabled={updatingRole === member.user_id}
+                                                    >
+                                                        <SelectTrigger className={`w-[110px] h-8 text-xs border ${roleBadgeClass(member.role)}`}>
+                                                            <div className="flex items-center gap-1.5">
+                                                                {updatingRole === member.user_id ? (
+                                                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                                                ) : (
+                                                                    roleIcon(member.role)
+                                                                )}
+                                                                <span className="capitalize">{member.role}</span>
+                                                            </div>
+                                                        </SelectTrigger>
+                                                        <SelectContent>
+                                                            {assignableRoles.map((r) => (
+                                                                <SelectItem key={r} value={r}>
+                                                                    <div className="flex items-center gap-1.5">
+                                                                        {roleIcon(r)}
+                                                                        <span className="capitalize">{r}</span>
+                                                                    </div>
+                                                                </SelectItem>
+                                                            ))}
+                                                        </SelectContent>
+                                                    </Select>
+                                                ) : (
+                                                    <Badge
+                                                        variant="outline"
+                                                        className={`gap-1 text-xs capitalize ${roleBadgeClass(member.role)}`}
+                                                    >
+                                                        {roleIcon(member.role)}
+                                                        {member.role}
+                                                    </Badge>
+                                                )}
+                                                {canRemove && (
+                                                    <Button
+                                                        size="icon"
+                                                        variant="ghost"
+                                                        className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                                                        onClick={() => removeMember(member.user_id, member.email)}
+                                                    >
+                                                        <Trash2 className="w-4 h-4" />
+                                                    </Button>
+                                                )}
                                             </div>
-                                        </div>
-                                        <div className="flex items-center gap-2">
-                                            <Badge variant={roleBadgeVariant(member.role)} className="gap-1 text-xs capitalize">
-                                                {roleIcon(member.role)}
-                                                {member.role}
-                                            </Badge>
-                                            {member.role !== "owner" && member.user_id !== user?.id && (
-                                                <Button
-                                                    size="icon"
-                                                    variant="ghost"
-                                                    className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                                                    onClick={() => removeMember(member.user_id, member.email)}
-                                                >
-                                                    <Trash2 className="w-4 h-4" />
-                                                </Button>
-                                            )}
                                         </div>
                                     </div>
-                                </div>
-                            ))}
+                                );
+                            })}
                         </div>
                     )}
                 </CardContent>

@@ -10,6 +10,7 @@ from bson import ObjectId
 
 from app.database import get_db
 from app.utils.helpers import utc_now
+from app.drafts.service import create_snapshot
 
 router = APIRouter()
 
@@ -19,6 +20,8 @@ active_rooms: Dict[str, Dict[str, dict]] = {}
 awareness_states: Dict[str, Dict[str, dict]] = {}
 # Debounced save timers
 save_timers: Dict[str, asyncio.Task] = {}
+# Track whether each connection made edits: (draft_id, conn_id) -> bool
+connection_has_edits: Dict[str, bool] = {}
 
 
 class CollaborationManager:
@@ -144,8 +147,20 @@ async def draft_collaboration(websocket: WebSocket, draft_id: str):
 
     if token:
         try:
-            from app.auth.dependencies import decode_token
-            user = decode_token(token)
+            from app.auth.service import decode_token
+            payload = decode_token(token)
+            if payload:
+                # Look up full user record for full_name
+                db_pre = get_db()
+                user_doc = await db_pre.users.find_one({"_id": ObjectId(payload.get("sub", ""))})
+                if user_doc:
+                    user = {
+                        "id": str(user_doc["_id"]),
+                        "sub": payload.get("sub", ""),
+                        "email": user_doc.get("email", payload.get("email", "")),
+                        "full_name": user_doc.get("full_name", ""),
+                        "role": payload.get("role", "user"),
+                    }
         except Exception:
             pass
 
@@ -177,6 +192,8 @@ async def draft_collaboration(websocket: WebSocket, draft_id: str):
             if msg_type == "operation":
                 # Client sent a text operation (insert/delete)
                 content = data.get("content", "")
+                # Mark this connection as having made edits
+                connection_has_edits[f"{draft_id}:{conn_id}"] = True
                 # Auto-save with debouncing
                 schedule_save(draft_id, content)
                 # Broadcast to all other clients
@@ -239,6 +256,29 @@ async def draft_collaboration(websocket: WebSocket, draft_id: str):
     except Exception as e:
         print(f"WebSocket error for draft {draft_id}: {e}")
     finally:
+        # Check if this user made any edits during their session
+        edit_key = f"{draft_id}:{conn_id}"
+        made_edits = connection_has_edits.pop(edit_key, False)
+
+        # If they made edits, flush pending save and create a version snapshot
+        if made_edits:
+            # Cancel debounced save and do an immediate save first
+            if draft_id in save_timers:
+                save_timers[draft_id].cancel()
+                del save_timers[draft_id]
+            # Ensure latest content is saved before snapshotting
+            try:
+                draft_doc = await db.drafts.find_one({"_id": ObjectId(draft_id)})
+                if draft_doc:
+                    await create_snapshot(
+                        draft_id,
+                        author_id=user.get("id", user.get("sub", "")),
+                        author_name=user.get("full_name", ""),
+                    )
+                    print(f"Auto-snapshot created for draft {draft_id} by {user.get('full_name', '')}")
+            except Exception as snap_err:
+                print(f"Auto-snapshot failed for draft {draft_id}: {snap_err}")
+
         user_info = manager.disconnect(draft_id, websocket, conn_id)
         if user_info:
             await manager.broadcast(draft_id, {

@@ -127,10 +127,50 @@ async def remove_member(
     user_id: str,
     current_user: dict = Depends(get_current_user),
 ):
-    if not await service.check_permission(workspace_id, current_user["id"], "owner"):
-        raise HTTPException(status_code=403, detail="Only owners can remove members")
+    # Owner or admin can remove members
+    caller_role = await service.get_member_role(workspace_id, current_user["id"])
+    if caller_role not in ("owner", "admin"):
+        raise HTTPException(status_code=403, detail="Only owners and admins can remove members")
+
+    # Admin cannot remove owner
+    target_role = await service.get_member_role(workspace_id, user_id)
+    if target_role == "owner":
+        raise HTTPException(status_code=403, detail="Cannot remove the workspace owner")
 
     removed = await service.remove_member(workspace_id, user_id)
     if not removed:
         raise HTTPException(status_code=404, detail="Member not found")
     return {"message": "Member removed"}
+
+
+@router.patch("/{workspace_id}/members/{user_id}/role")
+async def update_member_role(
+    workspace_id: str,
+    user_id: str,
+    body: dict,
+    current_user: dict = Depends(get_current_user),
+):
+    """Update a member's role. Owner or Admin can change roles."""
+    new_role = body.get("role", "")
+    if new_role not in ("viewer", "editor", "admin"):
+        raise HTTPException(status_code=400, detail="Role must be viewer, editor, or admin")
+
+    caller_role = await service.get_member_role(workspace_id, current_user["id"])
+    if caller_role not in ("owner", "admin"):
+        raise HTTPException(status_code=403, detail="Only owners and admins can change roles")
+
+    # Admin cannot change owner's role or assign admin role (only owner can)
+    target_role = await service.get_member_role(workspace_id, user_id)
+    if target_role == "owner":
+        raise HTTPException(status_code=403, detail="Cannot change the owner's role")
+
+    if caller_role == "admin":
+        if new_role == "admin":
+            raise HTTPException(status_code=403, detail="Only owners can assign admin role")
+        if target_role == "admin":
+            raise HTTPException(status_code=403, detail="Only owners can change an admin's role")
+
+    updated = await service.update_member_role(workspace_id, user_id, new_role)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Member not found or role unchanged")
+    return {"message": "Role updated"}
