@@ -8,6 +8,7 @@ import {
   Users,
   ChevronLeft,
   ChevronRight,
+  BarChart3,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -31,6 +32,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
         { icon: FileText, label: "Research", path: `/workspace/${workspaceId}/papers` },
         { icon: PenTool, label: "Drafts", path: `/workspace/${workspaceId}/drafts` },
         { icon: Users, label: "Members", path: `/workspace/${workspaceId}/members` },
+        { icon: BarChart3, label: "Analytics", path: `/workspace/${workspaceId}/analytics` },
       ]
       : []),
     ...(!workspaceId && user?.role === "admin"

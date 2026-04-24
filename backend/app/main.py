@@ -22,6 +22,7 @@ from app.references.router import router as references_router
 from app.latex.router import router as latex_router
 from app.admin.router import router as admin_router
 from app.papers.status_ws import router as papers_ws_router
+from app.analytics.router import router as analytics_router
 
 
 @asynccontextmanager
@@ -112,6 +113,7 @@ app.include_router(drafts_ai_router, prefix="/api")
 app.include_router(references_router, prefix="/api")
 app.include_router(latex_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")
+app.include_router(analytics_router, prefix="/api")
 
 
 @app.get("/")

@@ -10,6 +10,7 @@ import { DraftEditor } from "@/pages/DraftEditor";
 import { WorkspaceMembersPage } from "@/pages/WorkspaceMembersPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { AdminPage } from "@/pages/AdminPage";
+import { AnalyticsPage } from "@/pages/AnalyticsPage";
 import { Toaster } from "sonner";
 
 function App() {
@@ -28,6 +29,7 @@ function App() {
             <Route path="/workspace/:workspaceId/drafts" element={<DraftsPage />} />
             <Route path="/workspace/:workspaceId/drafts/:draftId" element={<DraftEditor />} />
             <Route path="/workspace/:workspaceId/members" element={<WorkspaceMembersPage />} />
+            <Route path="/workspace/:workspaceId/analytics" element={<AnalyticsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/admin" element={<AdminPage />} />
           </Route>

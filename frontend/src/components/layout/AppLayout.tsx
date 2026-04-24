@@ -42,6 +42,7 @@ export function AppLayout() {
       else if (path.includes("/drafts/")) crumbs.push({ label: "Drafts", path: `/workspace/${workspaceId}/drafts` }, { label: "Editor" });
       else if (path.includes("/drafts")) crumbs.push({ label: "Drafts" });
       else if (path.includes("/members")) crumbs.push({ label: "Members" });
+      else if (path.includes("/analytics")) crumbs.push({ label: "Analytics" });
     }
 
     return crumbs;
